@@ -1,0 +1,17 @@
+# Go
+/server/hairpin
+/server/*.db
+/server/*.db-wal
+/server/*.db-shm
+
+# Node / Expo
+node_modules/
+.expo/
+dist/
+web-build/
+*.log
+.DS_Store
+
+# Local env
+.env
+.env.local
