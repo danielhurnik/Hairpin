@@ -1,0 +1,376 @@
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Text, View } from 'react-native';
+import { ApiError, api } from '../../src/api';
+import { CarArt, DriverStatBlock, LiveryColors, RarityBadge, st } from '../../src/components/game';
+import { Banner, Button, Card, Loading, Row, Screen, SectionLabel } from '../../src/components/ui';
+import { useGame } from '../../src/state';
+import { colors, rarityColor, space, text as t } from '../../src/theme';
+import type { Opponent, RaceOutcome, SegmentResult } from '../../src/types';
+
+type OpponentResponse = {
+  opponent: Opponent;
+  your_rating: number;
+  free_races: number;
+  extra_cost: number;
+};
+
+/** How long each corner takes to reveal during the replay. */
+const SEGMENT_MS = 550;
+
+export default function RaceScreen() {
+  const { state, refresh } = useGame();
+  const [preview, setPreview] = useState<OpponentResponse | null>(null);
+  const [outcome, setOutcome] = useState<RaceOutcome | null>(null);
+  const [revealed, setRevealed] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadPreview = useCallback(async () => {
+    setError(null);
+    try {
+      setPreview(await api.get<OpponentResponse>('/v1/race/opponent'));
+    } catch (e) {
+      setPreview(null);
+      setError(e instanceof ApiError ? e.message : 'Could not find an opponent');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!outcome) void loadPreview();
+  }, [loadPreview, outcome]);
+
+  useEffect(() => () => void (timer.current && clearInterval(timer.current)), []);
+
+  const start = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.post<RaceOutcome>('/v1/race/start');
+      setOutcome(res);
+      setRevealed(0);
+      // Reveal the run corner by corner. The result is already decided — this
+      // is presentation of a record the server wrote, not a live simulation.
+      timer.current = setInterval(() => {
+        setRevealed((n) => {
+          const next = n + 1;
+          if (next >= res.replay.segments.length && timer.current) {
+            clearInterval(timer.current);
+            timer.current = null;
+            void refresh();
+          }
+          return next;
+        });
+      }, SEGMENT_MS);
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : 'Race failed');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const skip = () => {
+    if (timer.current) {
+      clearInterval(timer.current);
+      timer.current = null;
+    }
+    if (outcome) setRevealed(outcome.replay.segments.length);
+    void refresh();
+  };
+
+  const reset = () => {
+    setOutcome(null);
+    setRevealed(0);
+  };
+
+  if (!state) return null;
+
+  if (outcome) {
+    return (
+      <ReplayView
+        outcome={outcome}
+        revealed={revealed}
+        onSkip={skip}
+        onAgain={reset}
+        racesLeft={outcome.free_races_left}
+      />
+    );
+  }
+
+  const canRace = state.player.free_races > 0 || state.player.rubies >= 15;
+
+  return (
+    <Screen onRefresh={refresh}>
+      {error && <Banner tone="error">{error}</Banner>}
+
+      <Card>
+        <Row style={{ justifyContent: 'space-between' }}>
+          <Text style={t.label}>Races today</Text>
+          <Text style={t.body}>
+            {state.player.free_races} free
+            {state.player.free_races === 0 ? ' · ◆15 per extra run' : ''}
+          </Text>
+        </Row>
+      </Card>
+
+      {!preview ? (
+        <Loading label="Finding someone on the pass…" />
+      ) : (
+        <>
+          <SectionLabel>Next challenge</SectionLabel>
+          <OpponentCard opponent={preview.opponent} yourRating={preview.your_rating} />
+
+          <Card>
+            <Text style={t.label}>Head to head</Text>
+            <Row gap={4} style={{ alignItems: 'flex-start' }}>
+              <View style={{ flex: 1, gap: space(2) }}>
+                <Text style={[t.small, { color: colors.accent }]}>You</Text>
+                <DriverStatBlock stats={state.build.driver} compare={preview.opponent.build.driver} />
+              </View>
+            </Row>
+          </Card>
+
+          <Button
+            title={state.player.free_races > 0 ? 'Run it' : 'Run it — ◆15'}
+            variant="primary"
+            busy={busy}
+            disabled={!canRace}
+            subtitle={canRace ? undefined : 'Out of races and rubies — come back tomorrow'}
+            onPress={start}
+          />
+          <Button title="Different opponent" variant="ghost" onPress={loadPreview} />
+        </>
+      )}
+    </Screen>
+  );
+}
+
+function OpponentCard({ opponent, yourRating }: { opponent: Opponent; yourRating: number }) {
+  const { state } = useGame();
+  const livery = state?.liveries.find((l) => l.id === opponent.livery_id);
+  const { primary, secondary } = LiveryColors(livery);
+  const edge = yourRating - opponent.rating;
+
+  return (
+    <Card>
+      <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <View style={{ flex: 1 }}>
+          <Text style={t.label}>Rank {opponent.ladder_rank}</Text>
+          <Text style={t.title}>{opponent.name}</Text>
+          <Text style={t.small}>
+            Level {opponent.driver_level} · {opponent.chassis_name}
+          </Text>
+        </View>
+        <View style={{ alignItems: 'flex-end' }}>
+          <Text style={t.label}>Rating</Text>
+          <Text style={[st.ratingValue, { color: colors.text }]}>{opponent.rating.toFixed(1)}</Text>
+          <Text style={[t.tiny, { color: edge >= 0 ? colors.green : colors.red }]}>
+            you {edge >= 0 ? '+' : ''}
+            {edge.toFixed(1)}
+          </Text>
+        </View>
+      </Row>
+
+      <View style={{ alignItems: 'center' }}>
+        <CarArt primary={primary} secondary={secondary} width={200} />
+      </View>
+
+      {opponent.notable_items?.length ? (
+        <View style={{ gap: space(1) }}>
+          <Text style={t.label}>Carrying</Text>
+          {opponent.notable_items.map((n) => (
+            <Text key={n} style={[t.small, { color: colors.purple }]}>
+              {n}
+            </Text>
+          ))}
+        </View>
+      ) : null}
+
+      <Banner tone="info">
+        {edge >= 0
+          ? 'You are the favourite — which is worth about two runs in three.'
+          : 'You are the underdog. The mountain gets a vote.'}
+      </Banner>
+    </Card>
+  );
+}
+
+function ReplayView({
+  outcome,
+  revealed,
+  onSkip,
+  onAgain,
+  racesLeft,
+}: {
+  outcome: RaceOutcome;
+  revealed: number;
+  onSkip: () => void;
+  onAgain: () => void;
+  racesLeft: number;
+}) {
+  const segs = outcome.replay.segments;
+  const done = revealed >= segs.length;
+  const shown = segs.slice(0, revealed);
+  const current = shown[shown.length - 1];
+
+  return (
+    <Screen>
+      <Card>
+        <Text style={t.label}>{outcome.replay.track_name}</Text>
+        <Row style={{ justifyContent: 'space-between' }}>
+          <Text style={t.heading}>You</Text>
+          <Text style={t.heading}>{outcome.opponent.name}</Text>
+        </Row>
+
+        <GapMeter gap={current?.gap ?? 0} />
+
+        <Row style={{ justifyContent: 'space-between' }}>
+          <Text style={st.timeCell}>{(current?.challenger_total ?? 0).toFixed(2)}</Text>
+          <Text style={[t.small, { flex: 1, textAlign: 'center' }]}>
+            {current ? current.name : 'On the line'}
+          </Text>
+          <Text style={st.timeCell}>{(current?.opponent_total ?? 0).toFixed(2)}</Text>
+        </Row>
+
+        {current?.note ? (
+          <Text style={[t.small, { textAlign: 'center', color: colors.accent }]}>{current.note}</Text>
+        ) : null}
+      </Card>
+
+      <Card>
+        <SectionLabel>Sector times</SectionLabel>
+        {shown.map((seg) => (
+          <SegmentRow key={seg.index} seg={seg} />
+        ))}
+        {!done && <Loading />}
+      </Card>
+
+      {done && (
+        <>
+          <Card tone="accent">
+            <Text style={[t.title, { color: outcome.won ? colors.green : colors.red }]}>
+              {outcome.won ? 'WIN' : 'LOSS'} by {outcome.replay.margin.toFixed(2)}s
+            </Text>
+            <Text style={t.small}>
+              {outcome.replay.lead_changes > 0
+                ? `${outcome.replay.lead_changes} lead change${outcome.replay.lead_changes > 1 ? 's' : ''}`
+                : 'Led from lights to flag'}
+              {outcome.replay.upset ? ' · upset' : ''}
+            </Text>
+
+            <Row gap={4}>
+              <Text style={[t.body, { color: colors.cash }]}>
+                +¥{outcome.reward.cash.toLocaleString()}
+              </Text>
+              <Text style={[t.body, { color: colors.blue }]}>+{outcome.reward.xp} XP</Text>
+            </Row>
+
+            {outcome.rank_after < outcome.rank_before ? (
+              <Banner tone="good">
+                Ladder {outcome.rank_before} → {outcome.rank_after}
+              </Banner>
+            ) : (
+              <Text style={t.small}>Ladder unchanged at {outcome.rank_after}</Text>
+            )}
+
+            {outcome.leveled_to ? (
+              <Banner tone="good">
+                Level {outcome.leveled_to} — {outcome.stat_points_awarded} points to spend.
+              </Banner>
+            ) : null}
+
+            {outcome.drop ? (
+              <View style={{ gap: space(1) }}>
+                <Text style={t.label}>Dropped</Text>
+                <Row gap={2}>
+                  <Text style={[t.body, { color: rarityColor[outcome.drop.rarity] }]}>
+                    {outcome.drop.name}
+                  </Text>
+                  <RarityBadge rarity={outcome.drop.rarity} />
+                </Row>
+                <Text style={[t.tiny, { fontStyle: 'italic' }]}>{outcome.drop.flavour}</Text>
+              </View>
+            ) : null}
+          </Card>
+
+          <Button
+            title={racesLeft > 0 ? `Race again (${racesLeft} free left)` : 'Race again — ◆15'}
+            variant="primary"
+            onPress={onAgain}
+          />
+        </>
+      )}
+
+      {!done && <Button title="Skip to result" variant="ghost" onPress={onSkip} />}
+    </Screen>
+  );
+}
+
+/** A centre-zero bar: fills right when you lead, left when you trail. */
+function GapMeter({ gap }: { gap: number }) {
+  const clamped = Math.max(-3, Math.min(3, gap));
+  const pct = (Math.abs(clamped) / 3) * 50;
+  const ahead = gap >= 0;
+  return (
+    <View style={{ gap: space(1) }}>
+      <View
+        style={{
+          height: 10,
+          backgroundColor: colors.raised,
+          borderRadius: 5,
+          flexDirection: 'row',
+          overflow: 'hidden',
+        }}>
+        <View style={{ flex: 1, alignItems: 'flex-end', flexDirection: 'row', justifyContent: 'flex-end' }}>
+          {!ahead && (
+            <View style={{ width: `${pct * 2}%`, height: '100%', backgroundColor: colors.red }} />
+          )}
+        </View>
+        <View style={{ width: 2, backgroundColor: colors.borderBright }} />
+        <View style={{ flex: 1, flexDirection: 'row' }}>
+          {ahead && (
+            <View style={{ width: `${pct * 2}%`, height: '100%', backgroundColor: colors.green }} />
+          )}
+        </View>
+      </View>
+      <Text
+        style={[
+          st.gapCell,
+          { alignSelf: 'center', width: 'auto', color: ahead ? colors.green : colors.red, fontSize: 16 },
+        ]}>
+        {ahead ? '+' : ''}
+        {gap.toFixed(2)}
+      </Text>
+    </View>
+  );
+}
+
+function SegmentRow({ seg }: { seg: SegmentResult }) {
+  const won = seg.challenger_time < seg.opponent_time;
+  return (
+    <View style={st.segRow}>
+      <Text style={[st.timeCell, { color: won ? colors.green : colors.textDim }]}>
+        {seg.challenger_time.toFixed(2)}
+      </Text>
+      <View style={{ flex: 1 }}>
+        <Text style={[t.small, { color: colors.text }]}>{seg.name}</Text>
+        {(seg.challenger_mistake || seg.opponent_mistake) && (
+          <Text style={[t.tiny, { color: colors.red }]}>
+            {seg.challenger_mistake && seg.opponent_mistake
+              ? 'both ran wide'
+              : seg.challenger_mistake
+                ? 'you ran wide'
+                : 'rival ran wide'}
+          </Text>
+        )}
+      </View>
+      <Text style={[st.timeCell, { color: !won ? colors.green : colors.textDim }]}>
+        {seg.opponent_time.toFixed(2)}
+      </Text>
+      <Text style={[st.gapCell, { color: seg.gap >= 0 ? colors.green : colors.red }]}>
+        {seg.gap >= 0 ? '+' : ''}
+        {seg.gap.toFixed(2)}
+      </Text>
+    </View>
+  );
+}
