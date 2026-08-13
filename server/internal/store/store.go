@@ -33,6 +33,7 @@ var (
 	ErrNoOpponent     = errors.New("no opponent available")
 	ErrAlreadyOwned   = errors.New("already owned")
 	ErrLevelLocked    = errors.New("driver level too low")
+	ErrPartMissing    = errors.New("the car has no adjustable part for that")
 	ErrOfferPurchased = errors.New("offer already purchased")
 )
 
@@ -64,6 +65,10 @@ func Open(dsn string, opts Options) (*Store, error) {
 	if err := migrateCars(db); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate cars: %w", err)
+	}
+	if err := migrateSetups(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate setups: %w", err)
 	}
 	ts := opts.TimeScale
 	if ts <= 0 {
@@ -109,6 +114,34 @@ func migrateCars(db *sql.DB) error {
 		}
 	}
 	return tx.Commit()
+}
+
+// migrateSetups adds the setup sheet to cars that predate it. Every column
+// defaults to zero, which is the factory setting, so existing cars come
+// through driving exactly as they did before.
+func migrateSetups(db *sql.DB) error {
+	has, err := hasColumn(db, "player_cars", "setup_gearing")
+	if err != nil || has {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, col := range setupColumns {
+		if _, err := tx.Exec(`ALTER TABLE player_cars ADD COLUMN ` + col + ` INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add %s: %w", col, err)
+		}
+	}
+	return tx.Commit()
+}
+
+// setupColumns is the storage order of the setup sheet, used by the migration
+// and by every read and write of a car.
+var setupColumns = []string{
+	"setup_gearing", "setup_boost", "setup_pressure", "setup_ballast",
+	"setup_ride", "setup_camber", "setup_damping",
 }
 
 func hasColumn(db *sql.DB, table, column string) (bool, error) {
@@ -169,14 +202,18 @@ type Player struct {
 	Stats         game.DriverStats  `json:"base_stats"`
 	ChassisID     string            `json:"chassis_id"`
 	Tiers         game.UpgradeTiers `json:"upgrades"`
-	LiveryID      string            `json:"livery_id"`
-	Rank          int               `json:"ladder_rank"`
-	Wins          int               `json:"wins"`
-	Losses        int               `json:"losses"`
-	FreeRaces     int               `json:"free_races"`
-	ExtraUsed     int               `json:"extra_races_used"`
-	RacesResetAt  time.Time         `json:"races_reset_at"`
-	CreatedAt     time.Time         `json:"created_at"`
+	// Setup is the active car's sheet, as stored. Always read through
+	// game.LegalSetup before it reaches the race — a tier that no longer
+	// covers an axis must not leave a live adjustment behind it.
+	Setup        game.Setup `json:"setup"`
+	LiveryID     string     `json:"livery_id"`
+	Rank         int        `json:"ladder_rank"`
+	Wins         int        `json:"wins"`
+	Losses       int        `json:"losses"`
+	FreeRaces    int        `json:"free_races"`
+	ExtraUsed    int        `json:"extra_races_used"`
+	RacesResetAt time.Time  `json:"races_reset_at"`
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 type InventoryItem struct {
@@ -206,7 +243,10 @@ const playerCols = `p.id, p.display_name, p.is_bot, p.cash, p.rubies, p.driver_l
 	p.stat_stamina, p.chassis_id, COALESCE(c.tier_engine, 0), COALESCE(c.tier_turbo, 0),
 	COALESCE(c.tier_tires, 0), COALESCE(c.tier_suspension, 0), COALESCE(c.tier_weight, 0),
 	p.livery_id, p.ladder_rank, p.wins, p.losses, p.free_races, p.extra_races_used,
-	p.races_reset_at, p.created_at`
+	p.races_reset_at, p.created_at,
+	COALESCE(c.setup_gearing, 0), COALESCE(c.setup_boost, 0), COALESCE(c.setup_pressure, 0),
+	COALESCE(c.setup_ballast, 0), COALESCE(c.setup_ride, 0), COALESCE(c.setup_camber, 0),
+	COALESCE(c.setup_damping, 0)`
 
 const playerFrom = ` FROM players p
 	LEFT JOIN player_cars c ON c.player_id = p.id AND c.chassis_id = p.chassis_id `
@@ -220,7 +260,9 @@ func scanPlayer(row interface{ Scan(...any) error }) (*Player, error) {
 		&p.Stats.Consistency, &p.Stats.Stamina, &p.ChassisID, &p.Tiers.Engine,
 		&p.Tiers.Turbo, &p.Tiers.Tires, &p.Tiers.Suspension, &p.Tiers.Weight,
 		&p.LiveryID, &p.Rank, &p.Wins, &p.Losses, &p.FreeRaces, &p.ExtraUsed,
-		&resetAt, &createdAt)
+		&resetAt, &createdAt,
+		&p.Setup.Gearing, &p.Setup.Boost, &p.Setup.Pressure, &p.Setup.Ballast,
+		&p.Setup.Ride, &p.Setup.Camber, &p.Setup.Damping)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -294,10 +336,10 @@ func buildFor(ctx context.Context, q queryer, p *Player) (game.Build, []Inventor
 		bonuses = append(bonuses, it.Bonus)
 	}
 	total := game.SumBonuses(bonuses...)
-	return game.Build{
+	return game.WithSetup(game.Build{
 		Car:    game.ComputeCar(p.ChassisID, p.Tiers, total),
 		Driver: p.Stats.Add(total.Driver),
-	}, items, nil
+	}, game.LegalSetup(p.Setup, p.Tiers)), items, nil
 }
 
 // BuildFor is the exported read-only form.

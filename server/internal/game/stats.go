@@ -104,6 +104,13 @@ const (
 type Build struct {
 	Car    CarStats    `json:"car"`
 	Driver DriverStats `json:"driver"`
+	// Setup is deliberately not serialised. A rival's sheet is theirs — being
+	// able to read it would turn tuning into copying, and the opponent view is
+	// sent to the client in full.
+	Setup Setup `json:"-"`
+	// SetupNorm keeps the setup a pure trade for THIS car. Set by WithSetup;
+	// never assign it by hand.
+	SetupNorm float64 `json:"-"`
 }
 
 // UpgradeTiers holds the purchased tier (0..MaxTier) for each category.

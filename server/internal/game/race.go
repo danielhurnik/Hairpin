@@ -74,6 +74,7 @@ func segmentPerf(b Build, seg Segment, progress float64) float64 {
 
 	perf := 100 * (CarWeight*car + DriverWeight*drv)
 	perf *= drivetrainMod(seg.Kind, b.Car.Drivetrain)
+	perf *= setupMod(b, seg.Kind)
 	perf *= staminaFactor(b.Driver.Stamina, progress)
 
 	if perf < 1 {
@@ -177,9 +178,18 @@ func SimulateRace(track TrackDef, challenger, opponent Build, seed uint64) RaceR
 	}
 
 	// Form drifts across the run, one sequence per racer.
+	//
+	// A setup's spread is applied here rather than only to per-corner noise,
+	// and that is the whole reason it does anything. Corner noise is drawn
+	// independently eleven times and averages itself away by the finish; form
+	// is correlated across the entire run and does not. If you want a car that
+	// is genuinely quick on its day and genuinely wayward on the others, the
+	// day is the thing that has to vary.
+	//
+	// The number of draws is unchanged by the scaling, so replays stay exact.
 	n := len(track.Segments)
-	challForm := formSequence(rng, n, FormSigma)
-	oppForm := formSequence(rng, n, FormSigma)
+	challForm := formSequence(rng, n, FormSigma*setupVariance(challenger.Setup).SigmaMult)
+	oppForm := formSequence(rng, n, FormSigma*setupVariance(opponent.Setup).SigmaMult)
 
 	var challTotal, oppTotal float64
 	lastLeader := 0 // -1 opponent, 0 dead even, 1 challenger
@@ -279,7 +289,12 @@ func segmentTime(b Build, seg Segment, progress, form, noise, misRoll, misCost f
 	// narrows it. Clamped so nobody becomes a metronome or a lottery ticket.
 	cons := clamp(ReferenceDriverStat/math.Max(b.Driver.Consistency, 1), 0.55, 1.8)
 
-	sigma := SegmentSigma*(0.5+seg.Risk)*cons + b.Car.TurboLag*TurboLagPenalty
+	// How hard the car is being leaned on. Unlike the performance side of a
+	// setup this does not net out — it is the choice between a car that is
+	// quick on its day and one that turns up every time.
+	sv := setupVariance(b.Setup)
+
+	sigma := (SegmentSigma*(0.5+seg.Risk)*cons + b.Car.TurboLag*TurboLagPenalty) * sv.SigmaMult
 	t := base * (1 + form + noise*sigma)
 	if t < base*0.55 {
 		t = base * 0.55 // nobody gains half a second a corner from luck alone
@@ -289,7 +304,7 @@ func segmentTime(b Build, seg Segment, progress, form, noise, misRoll, misCost f
 	// by consistency and by knowing where the corner goes.
 	brave := clamp(1+(b.Driver.Bravery-ReferenceDriverStat)/ReferenceDriverStat*0.35, 0.6, 1.9)
 	smart := clamp(1-(b.Driver.Intelligence-ReferenceDriverStat)/ReferenceDriverStat*0.20, 0.5, 1.6)
-	p := MistakeBaseProb * seg.Risk * cons * brave * smart
+	p := MistakeBaseProb * seg.Risk * cons * brave * smart * sv.MistakeMult
 	if misRoll < p {
 		cost := MistakeCostMin + misCost*(MistakeCostMax-MistakeCostMin)
 		return t + seg.BaseSeconds*cost, true
@@ -361,6 +376,30 @@ func mistakeVerbLower(k SegmentKind) string {
 // PickTrack chooses a track deterministically from a seed.
 func PickTrack(seed uint64) TrackDef {
 	return Tracks[seed%uint64(len(Tracks))]
+}
+
+// NextTrackFor is the road a player is pointed at for their next race.
+//
+// You are told where you are going before you set the car up, so it has to be
+// fixed in advance and it has to stay fixed. Like K's Office stock, it is a
+// pure function — of the player and of how many races they have finished —
+// rather than a stored column: there is nothing to re-roll by closing the app,
+// and it advances only by actually racing.
+func NextTrackFor(playerID string, racesCompleted int) TrackDef {
+	// FNV-1a over the id, mixed with the race count. Hashing the count in
+	// rather than adding it stops the sequence being a predictable rotation
+	// through the list.
+	var h uint64 = 14695981039346656037
+	for i := 0; i < len(playerID); i++ {
+		h ^= uint64(playerID[i])
+		h *= 1099511628211
+	}
+	h ^= uint64(racesCompleted) + 0x9E3779B97F4A7C15
+	h *= 1099511628211
+	h ^= h >> 29
+	h *= 0xBF58476D1CE4E5B9
+	h ^= h >> 32
+	return Tracks[h%uint64(len(Tracks))]
 }
 
 func clamp(v, lo, hi float64) float64 {

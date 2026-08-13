@@ -211,6 +211,55 @@ sink, and gives the upgrade ladder somewhere to go once the first car is maxed.
 Tiers therefore live on `player_cars`, one row per owned car, and
 `players.chassis_id` is a pointer to whichever one is being raced.
 
+**Setup** — seven adjustments, and you can only turn what you have bought the
+part for. A stock car has no coilovers to wind, no adjustable arms, no boost
+controller; each upgrade tier hands over another spanner, which gives the
+upgrade ladder a second payoff beyond raw numbers. Suspension carries three of
+the seven, because that is where setup work actually lives.
+
+Adjusting is free and unlimited — the money went on the parts. You are told
+which pass you are racing before you commit, and it does not move until you
+have raced it.
+
+### The rule that makes setup interesting
+
+**A setup moves performance around. It never creates any.**
+
+Every axis is *centred*: whatever a notch gives you on one kind of road, it
+takes back elsewhere in exact proportion to how much of the game's racing
+happens there. Overall rating is therefore invariant to tuning — the garage
+number stays honest, and the per-track number is the one that responds.
+
+Getting that exactly right took two corrections worth recording:
+
+- Centring against flat time left a residue on any car whose performance is not
+  flat across corner types. A rating is a *performance*-weighted average, so an
+  AWD car — quicker on straights, slower through hairpins before the setup says
+  anything — got a free tenth. Weighting the shares by `drivetrainMod` fixes it
+  at the source.
+- The same problem returns, larger, for any car far from the reference build: a
+  fully built car gained about **1.7%** overall from simply winding every axis
+  positive, which is a free lunch and a single obvious answer. `WithSetup`
+  divides by the build's own performance-weighted average of the modifier,
+  which removes it exactly for every car.
+
+`TestSetupCannotRaiseOverallRating` and `TestNoAxisHasAUniversallyCorrectSetting`
+hold both properties down, and the calibration curve is unmoved at 65.3%.
+
+### Risk is a separate axis from speed
+
+Spread and mistakes are not the same kind of thing, and the difference is what
+makes aggression a strategy rather than a tax. A wider distribution is worth
+having when you are the slower car — the only way past a better build is a run
+that goes unusually well. A mistake is time lost and never time found.
+
+So aggression moves spread hard and mistakes gently. It also has to move the
+*correlated* term: per-corner noise is drawn independently eleven times and
+averages itself away by the finish, while form is correlated across the whole
+run. Scaling segment noise alone did nothing measurable; scaling form turns a
++5% favourite's 65% into a **36.7%** underdog win rate on a wild sheet, against
+35.0% on a calm one.
+
 **Driver attributes** — bravery, intelligence, reflexes, consistency, stamina.
 Three points per level, spent by the player, and they genuinely change how a
 race runs rather than adding a flat bonus:
@@ -302,6 +351,10 @@ GET  /v1/cars
 POST /v1/cars/buy           { chassis_id }
 POST /v1/cars/equip         { chassis_id }
 
+GET  /v1/setup
+POST /v1/setup              { axis, value }
+POST /v1/setup/reset
+
 GET  /v1/inventory
 POST /v1/inventory/equip    { item_id }
 POST /v1/inventory/unequip  { item_id }
@@ -369,11 +422,20 @@ are genuinely not finished, in the order they should be addressed:
    costs ¥50,000 more than the GC-Series AWD and rates lower, because it is
    1560kg with 50 handling. That may be the right call for a trade-off car, or
    the prices may need another pass.
+7. **Bots do not tune.** Seeded rivals race on a factory sheet, so a player who
+   sets the car up for the pass carries a small edge into every race. It is the
+   right edge to give a human, but it should be a *choice* they can get wrong,
+   which means bots need setups of their own — deterministic from their id, so
+   they are set up for something rather than for this particular track.
+8. **Two passes barely respond to setup.** Happogahara moves five of the seven
+   axes; Usui moves one. That is defensible variety, but Usui in particular is
+   close to a screen with nothing to decide on it.
+9. **There is no setup UI.** The sheet, the gates, and the hints are all
+   server-side and covered by tests; nothing renders it yet.
 
 ## What Milestone 2 might be
 
 - Teams, and team battles against another team's five saved builds
-- Per-chassis tuning setups (chassis purchases themselves are in)
 - Track-specific tuning (gearing for Happogahara vs Akina)
 - Weather and surface state on the pass
 - A real ladder season with resets and rewards

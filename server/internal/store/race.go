@@ -162,8 +162,12 @@ func (s *Store) RunRace(ctx context.Context, playerID string) (*RaceOutcome, err
 		}
 
 		// --- simulate ---
+		//
+		// The track is the one the player was shown and set the car up for, so
+		// it comes from the same pure function the opponent screen used rather
+		// than from the seed. Only the running of the race is random.
 		seed := randomUint64()
-		track := game.PickTrack(seed)
+		track := game.NextTrackFor(p.ID, p.Wins+p.Losses)
 		result := game.SimulateRace(track, myBuild, opBuild, seed)
 
 		reward := game.RaceRewardFor(result.ChallWon, opRow.Rank, p.Level)
@@ -354,10 +358,10 @@ func (s *Store) entriesFor(ctx context.Context, viewerID string, players []*Play
 	out := make([]LadderEntry, 0, len(players))
 	for _, p := range players {
 		total := game.SumBonuses(bonuses[p.ID]...)
-		b := game.Build{
+		b := game.WithSetup(game.Build{
 			Car:    game.ComputeCar(p.ChassisID, p.Tiers, total),
 			Driver: p.Stats.Add(total.Driver),
-		}
+		}, game.LegalSetup(p.Setup, p.Tiers))
 		ch, _ := game.ChassisByID(p.ChassisID)
 		out = append(out, LadderEntry{
 			Rank: p.Rank, PlayerID: p.ID, Name: p.DisplayName, Level: p.Level,

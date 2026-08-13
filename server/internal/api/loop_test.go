@@ -961,3 +961,174 @@ func TestCarPurchaseCannotBeCheated(t *testing.T) {
 		t.Errorf("spent %d across two purchase attempts, want %d", got, spent)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+type setupView struct {
+	Setup struct {
+		ChassisID   string `json:"chassis_id"`
+		AnyUnlocked bool   `json:"any_unlocked"`
+		Track       struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"track"`
+		Axes []struct {
+			ID       string `json:"id"`
+			Value    int    `json:"value"`
+			Unlocked bool   `json:"unlocked"`
+			Requires string `json:"requires"`
+			Effect   string `json:"effect"`
+			Matters  string `json:"matters"`
+		} `json:"axes"`
+	} `json:"setup"`
+	Rating      float64 `json:"rating"`
+	TrackRating float64 `json:"track_rating"`
+}
+
+func (v setupView) axis(t *testing.T, id string) int {
+	t.Helper()
+	for i, a := range v.Setup.Axes {
+		if a.ID == id {
+			return i
+		}
+	}
+	t.Fatalf("axis %s missing from the sheet", id)
+	return -1
+}
+
+// buildEverything maxes every category so the whole sheet is adjustable.
+func (h *harness) buildEverything() {
+	h.t.Helper()
+	h.grant(20_000_000, 60)
+	for _, cat := range game.UpgradeCategories {
+		for i := 0; i < game.MaxTier; i++ {
+			h.do("POST", "/v1/garage/upgrade", map[string]any{"category": cat}, nil)
+		}
+	}
+}
+
+// The load-bearing promise of the feature: you are shown a road, you set the
+// car up for it, and that is the road you actually race.
+func TestYouRaceTheTrackYouWereShown(t *testing.T) {
+	h := newHarness(t, 20)
+
+	for i := 0; i < 4; i++ {
+		var preview struct {
+			Track struct {
+				ID string `json:"id"`
+			} `json:"track"`
+		}
+		h.do("GET", "/v1/race/opponent", nil, &preview)
+		if preview.Track.ID == "" {
+			t.Fatal("the opponent screen does not say where the race is")
+		}
+
+		// Asking again must not re-roll it.
+		for j := 0; j < 3; j++ {
+			var again struct {
+				Track struct {
+					ID string `json:"id"`
+				} `json:"track"`
+			}
+			h.do("GET", "/v1/race/opponent", nil, &again)
+			if again.Track.ID != preview.Track.ID {
+				t.Fatalf("track changed from %s to %s just by looking again",
+					preview.Track.ID, again.Track.ID)
+			}
+		}
+
+		var raced struct {
+			Replay struct {
+				TrackID string `json:"track_id"`
+			} `json:"replay"`
+		}
+		h.do("POST", "/v1/race/start", nil, &raced)
+		if raced.Replay.TrackID != preview.Track.ID {
+			t.Fatalf("raced on %s after being shown %s", raced.Replay.TrackID, preview.Track.ID)
+		}
+	}
+}
+
+func TestSetupSheetUnlocksWithParts(t *testing.T) {
+	h := newHarness(t, 20)
+
+	var stock setupView
+	h.do("GET", "/v1/setup", nil, &stock)
+	if stock.Setup.AnyUnlocked {
+		t.Error("a stock car reports something adjustable")
+	}
+	if len(stock.Setup.Axes) == 0 {
+		t.Fatal("the sheet is empty")
+	}
+	for _, a := range stock.Setup.Axes {
+		if a.Requires == "" {
+			t.Errorf("locked axis %q does not say which part to buy", a.ID)
+		}
+	}
+
+	h.buildEverything()
+	var built setupView
+	h.do("GET", "/v1/setup", nil, &built)
+	if !built.Setup.AnyUnlocked {
+		t.Fatal("a fully built car still reports nothing adjustable")
+	}
+	for _, a := range built.Setup.Axes {
+		if !a.Unlocked {
+			t.Errorf("axis %q locked on a fully built car", a.ID)
+		}
+	}
+
+	// Tuning moves the per-track number and leaves the garage number alone.
+	before := built
+	var after setupView
+	h.do("POST", "/v1/setup", map[string]any{"axis": "gearing", "value": -2}, &after)
+	if after.Setup.Axes[after.axis(t, "gearing")].Value != -2 {
+		t.Error("gearing did not stick")
+	}
+	if diff := after.Rating - before.Rating; diff > 0.05 || diff < -0.05 {
+		t.Errorf("overall rating moved by %.4f on a setup change", diff)
+	}
+	if after.TrackRating == before.TrackRating {
+		t.Error("the per-track rating did not respond to the setup at all")
+	}
+}
+
+func TestSetupCannotBeCheated(t *testing.T) {
+	h := newHarness(t, 20)
+
+	// Nothing is adjustable until the part is on the car.
+	if code := h.try("POST", "/v1/setup", map[string]any{"axis": "camber", "value": 2}, nil); code != http.StatusConflict {
+		t.Errorf("adjusting a part-less car returned %d, want 409", code)
+	}
+
+	h.buildEverything()
+
+	// Values off the end of the sheet.
+	for _, v := range []int{game.SetupMax + 1, game.SetupMin - 1, 99999} {
+		if code := h.try("POST", "/v1/setup", map[string]any{"axis": "gearing", "value": v}, nil); code != http.StatusBadRequest {
+			t.Errorf("gearing %d returned %d, want 400", v, code)
+		}
+	}
+	// An axis that does not exist.
+	if code := h.try("POST", "/v1/setup", map[string]any{"axis": "nitrous", "value": 1}, nil); code != http.StatusBadRequest {
+		t.Errorf("bogus axis returned %d, want 400", code)
+	}
+	// Naming the effect rather than the setting.
+	if code := h.try("POST", "/v1/setup",
+		map[string]any{"axis": "gearing", "value": 1, "rating": 999}, nil); code != http.StatusBadRequest {
+		t.Errorf("request with unknown fields returned %d, want 400", code)
+	}
+
+	// A rival's sheet is not readable — copying is not tuning.
+	var op map[string]any
+	h.do("GET", "/v1/race/opponent", nil, &op)
+	body, err := json.Marshal(op)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(body, []byte("\"setup\"")) {
+		t.Error("the opponent view leaks the rival's setup sheet")
+	}
+}

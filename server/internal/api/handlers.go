@@ -159,6 +159,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request, p *store.Player) 
 		"job_board":   s.store.JobBoard(ctx, p),
 		"garage":      s.store.GarageOptions(ctx, p, build),
 		"cars":        cars,
+		"setup":       s.store.SetupFor(ctx, p),
 		"ladder":      ladder,
 		"liveries":    liveries,
 		"server_time": s.store.Now(),
@@ -331,6 +332,60 @@ func (s *Server) equipCar(w http.ResponseWriter, r *http.Request, p *store.Playe
 	s.carsPayload(w, r, p2, nil)
 }
 
+// ---------------------------------------------------------------------------
+// Setup
+// ---------------------------------------------------------------------------
+
+type setupReq struct {
+	Axis  string `json:"axis"`
+	Value int    `json:"value"`
+}
+
+func (s *Server) setup(w http.ResponseWriter, r *http.Request, p *store.Player) {
+	s.setupPayload(w, r, p)
+}
+
+func (s *Server) setSetup(w http.ResponseWriter, r *http.Request, p *store.Player) {
+	var req setupReq
+	if !decode(w, r, &req) {
+		return
+	}
+	p2, err := s.store.SetSetup(r.Context(), p.ID, req.Axis, req.Value)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.setupPayload(w, r, p2)
+}
+
+func (s *Server) resetSetup(w http.ResponseWriter, r *http.Request, p *store.Player) {
+	p2, err := s.store.ResetSetup(r.Context(), p.ID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.setupPayload(w, r, p2)
+}
+
+// setupPayload renders the sheet plus the rating the car carries on the road
+// it is about to be driven on. That per-track number is the one that moves
+// when you tune; the overall rating deliberately does not.
+func (s *Server) setupPayload(w http.ResponseWriter, r *http.Request, p *store.Player) {
+	build, _, err := s.store.BuildFor(r.Context(), p)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	view := s.store.SetupFor(r.Context(), p)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"player":       p,
+		"setup":        view,
+		"build":        build,
+		"rating":       game.OverallRating(build),
+		"track_rating": game.TrackRating(build, view.Track),
+	})
+}
+
 type allocateReq struct {
 	Stat   string `json:"stat"`
 	Points int    `json:"points"`
@@ -458,11 +513,16 @@ func (s *Server) opponent(w http.ResponseWriter, r *http.Request, p *store.Playe
 		writeErr(w, err)
 		return
 	}
+	// You are told the road before you commit to a setup, and it does not
+	// move until you have raced it.
+	track := s.store.NextTrack(p)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"opponent":    op,
-		"your_rating": game.OverallRating(build),
-		"free_races":  p.FreeRaces,
-		"extra_cost":  game.ExtraRaceRubies,
+		"opponent":     op,
+		"your_rating":  game.OverallRating(build),
+		"track":        track,
+		"track_rating": game.TrackRating(build, track),
+		"free_races":   p.FreeRaces,
+		"extra_cost":   game.ExtraRaceRubies,
 	})
 }
 
