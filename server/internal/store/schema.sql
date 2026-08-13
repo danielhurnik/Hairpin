@@ -20,12 +20,9 @@ CREATE TABLE IF NOT EXISTS players (
     stat_consistency  REAL NOT NULL DEFAULT 10,
     stat_stamina      REAL NOT NULL DEFAULT 10,
 
+    -- The car currently being raced. Upgrade tiers live on player_cars, one
+    -- row per owned car, so switching cars switches its whole build with it.
     chassis_id     TEXT NOT NULL DEFAULT 'ae_coupe',
-    tier_engine     INTEGER NOT NULL DEFAULT 0,
-    tier_turbo      INTEGER NOT NULL DEFAULT 0,
-    tier_tires      INTEGER NOT NULL DEFAULT 0,
-    tier_suspension INTEGER NOT NULL DEFAULT 0,
-    tier_weight     INTEGER NOT NULL DEFAULT 0,
     livery_id      TEXT NOT NULL DEFAULT 'panda',
 
     ladder_rank    INTEGER NOT NULL,
@@ -75,6 +72,24 @@ CREATE INDEX IF NOT EXISTS idx_inventory_player ON inventory(player_id);
 -- One equipped item per slot, enforced in the schema.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_one_per_slot
     ON inventory(player_id, slot) WHERE equipped = 1;
+
+-- Every car a player owns, with that car's own upgrade tiers. A player's
+-- active car is players.chassis_id, which always has a row here.
+--
+-- Tiers are per-car on purpose: buying a chassis gives you a stock chassis,
+-- not a rebadged version of the car you already built. The primary key is
+-- what stops the same car being bought twice.
+CREATE TABLE IF NOT EXISTS player_cars (
+    player_id   TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,
+    chassis_id  TEXT NOT NULL,
+    tier_engine     INTEGER NOT NULL DEFAULT 0,
+    tier_turbo      INTEGER NOT NULL DEFAULT 0,
+    tier_tires      INTEGER NOT NULL DEFAULT 0,
+    tier_suspension INTEGER NOT NULL DEFAULT 0,
+    tier_weight     INTEGER NOT NULL DEFAULT 0,
+    acquired_at INTEGER NOT NULL,
+    PRIMARY KEY (player_id, chassis_id)
+);
 
 CREATE TABLE IF NOT EXISTS player_liveries (
     player_id   TEXT NOT NULL REFERENCES players(id) ON DELETE CASCADE,

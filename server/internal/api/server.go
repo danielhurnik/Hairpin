@@ -60,6 +60,10 @@ func (s *Server) Handler() http.Handler {
 	auth("POST /v1/garage/upgrade", s.buyUpgrade)
 	auth("POST /v1/driver/allocate", s.allocate)
 
+	auth("GET /v1/cars", s.cars)
+	auth("POST /v1/cars/buy", s.buyCar)
+	auth("POST /v1/cars/equip", s.equipCar)
+
 	auth("GET /v1/inventory", s.inventory)
 	auth("POST /v1/inventory/equip", s.equip)
 	auth("POST /v1/inventory/unequip", s.unequip)
@@ -264,6 +268,8 @@ func writeErr(w http.ResponseWriter, err error) {
 		fail(w, http.StatusConflict, "no_opponent", "nobody to race")
 	case errors.Is(err, store.ErrAlreadyOwned):
 		fail(w, http.StatusConflict, "already_owned", "already owned")
+	case errors.Is(err, store.ErrLevelLocked):
+		fail(w, http.StatusConflict, "level_locked", "your driver level is too low for that")
 	case errors.Is(err, store.ErrOfferPurchased):
 		fail(w, http.StatusConflict, "offer_taken", "you already bought that")
 	default:

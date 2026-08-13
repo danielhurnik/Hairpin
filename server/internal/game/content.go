@@ -15,21 +15,54 @@ type ChassisDef struct {
 	Grip       float64    `json:"grip"`
 	Handling   float64    `json:"handling"`
 	Braking    float64    `json:"braking"`
+	// Price is the cash cost to put one in your garage. Zero means the car
+	// cannot be bought — every player already owns the starter.
+	Price int64 `json:"price"`
+	// MinLevel gates the top of the range so the mountain is climbed rather
+	// than skipped by grinding 4-hour jobs at level 3.
+	MinLevel int    `json:"min_level"`
+	Blurb    string `json:"blurb"`
 }
 
-// Every player starts in the AE-Series Coupe. The rest exist so the ladder
-// bots have visual and mechanical variety; buying a chassis is post-M1.
+// Every player starts in the AE-Series Coupe. The rest are bought — and are
+// also what the ladder bots drive, so the car you are looking at in the
+// showroom is a car you have already been beaten by.
+//
+// Prices are set against the upgrade ladder rather than against each other:
+// upgrades are per-car and start at stock, so a full rebuild is ¥187,250 on
+// top of the sticker price. The purchase is the gate; the rebuild is the sink.
 var Chassis = []ChassisDef{
-	{ID: "ae_coupe", Name: "AE-Series Coupe", Drivetrain: FR, Power: 130, Weight: 940, Grip: 46, Handling: 72, Braking: 58},
-	{ID: "eg_hatch", Name: "EG-Series Hatch", Drivetrain: FF, Power: 170, Weight: 1040, Grip: 52, Handling: 66, Braking: 56},
-	{ID: "s_roadster", Name: "S-Series Roadster", Drivetrain: FR, Power: 205, Weight: 1180, Grip: 55, Handling: 68, Braking: 60},
-	{ID: "fc_rotary", Name: "FC-Series Rotary", Drivetrain: FR, Power: 215, Weight: 1260, Grip: 56, Handling: 63, Braking: 62},
-	{ID: "mr_mid", Name: "MR-Series Mid-Engine", Drivetrain: MR, Power: 200, Weight: 1100, Grip: 58, Handling: 74, Braking: 61},
-	{ID: "gc_awd", Name: "GC-Series AWD", Drivetrain: AWD, Power: 276, Weight: 1270, Grip: 68, Handling: 58, Braking: 66},
-	{ID: "r_gt", Name: "R-Series GT", Drivetrain: AWD, Power: 280, Weight: 1560, Grip: 72, Handling: 50, Braking: 70},
+	{ID: "ae_coupe", Name: "AE-Series Coupe", Drivetrain: FR, Power: 130, Weight: 940, Grip: 46, Handling: 72, Braking: 58,
+		Price: 0, MinLevel: 1,
+		Blurb: "Underpowered, weightless, and the best-handling thing on the pass until you can afford otherwise."},
+	{ID: "eg_hatch", Name: "EG-Series Hatch", Drivetrain: FF, Power: 170, Weight: 1040, Grip: 52, Handling: 66, Braking: 56,
+		Price: 12000, MinLevel: 5,
+		Blurb: "Front-wheel drive and proud of it. Cheap power, and it will not thank you for lifting mid-corner."},
+	{ID: "s_roadster", Name: "S-Series Roadster", Drivetrain: FR, Power: 205, Weight: 1180, Grip: 55, Handling: 68, Braking: 60,
+		Price: 30000, MinLevel: 9,
+		Blurb: "Balanced, honest, forgiving. The car people keep after they can afford faster ones."},
+	{ID: "mr_mid", Name: "MR-Series Mid-Engine", Drivetrain: MR, Power: 200, Weight: 1100, Grip: 58, Handling: 74, Braking: 61,
+		Price: 52000, MinLevel: 13,
+		Blurb: "Engine behind your shoulders. Rotates like nothing else and bites when you get it wrong."},
+	{ID: "fc_rotary", Name: "FC-Series Rotary", Drivetrain: FR, Power: 215, Weight: 1260, Grip: 56, Handling: 63, Braking: 62,
+		Price: 60000, MinLevel: 16,
+		Blurb: "Revs past where you expect it to stop. Heavy on the nose, endless on a long straight."},
+	{ID: "gc_awd", Name: "GC-Series AWD", Drivetrain: AWD, Power: 276, Weight: 1270, Grip: 68, Handling: 58, Braking: 66,
+		Price: 110000, MinLevel: 22,
+		Blurb: "All four wheels clawing. Point it down a wet pass and it simply leaves."},
+	{ID: "r_gt", Name: "R-Series GT", Drivetrain: AWD, Power: 280, Weight: 1560, Grip: 72, Handling: 50, Braking: 70,
+		Price: 160000, MinLevel: 28,
+		Blurb: "Enormous, expensive, and quicker than it has any right to be. The end of the road."},
 }
 
 const StarterChassis = "ae_coupe"
+
+// BuyableChassis reports whether a chassis can be purchased at all. The
+// starter is owned from the first login and never appears in the showroom.
+func BuyableChassis(id string) bool {
+	c, ok := ChassisByID(id)
+	return ok && c.Price > 0
+}
 
 func ChassisByID(id string) (ChassisDef, bool) {
 	for _, c := range Chassis {

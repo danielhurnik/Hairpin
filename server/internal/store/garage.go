@@ -103,9 +103,17 @@ func (s *Store) BuyUpgrade(ctx context.Context, playerID, category string) (*Pla
 		if !ok {
 			return ErrInvalid
 		}
+		// The upgrade lands on the car being driven, not on the player. Two
+		// statements, one transaction: the cash guard still decides whether
+		// anything happens at all.
 		if err := execGuarded(ctx, tx, ErrInsufficient,
-			fmt.Sprintf(`UPDATE players SET cash = cash - ?, %s = ?, updated_at = ? WHERE id = ? AND cash >= ?`, col),
-			cost, tier+1, s.Now().Unix(), playerID, cost); err != nil {
+			`UPDATE players SET cash = cash - ?, updated_at = ? WHERE id = ? AND cash >= ?`,
+			cost, s.Now().Unix(), playerID, cost); err != nil {
+			return err
+		}
+		if err := execGuarded(ctx, tx, ErrNotFound,
+			fmt.Sprintf(`UPDATE player_cars SET %s = ? WHERE player_id = ? AND chassis_id = ?`, col),
+			tier+1, playerID, p.ChassisID); err != nil {
 			return err
 		}
 		paid = cost

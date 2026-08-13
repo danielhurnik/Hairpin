@@ -17,7 +17,7 @@ func (s *Store) EnsurePlayer(ctx context.Context, deviceHash string) (*Player, b
 	var out *Player
 	err := s.tx(ctx, func(tx *sql.Tx) error {
 		p, err := scanPlayer(tx.QueryRowContext(ctx,
-			`SELECT `+playerCols+` FROM players WHERE device_hash = ?`, deviceHash))
+			`SELECT `+playerCols+playerFrom+` WHERE p.device_hash = ?`, deviceHash))
 		if err == nil {
 			out = p
 			return nil
@@ -44,6 +44,13 @@ func (s *Store) EnsurePlayer(ctx context.Context, deviceHash string) (*Player, b
 			game.StarterChassis, game.StarterLivery, bottom+1,
 			game.FreeRacesPerDay, game.NextDailyReset(now).Unix(), now.Unix(), now.Unix())
 		if err != nil {
+			return err
+		}
+		// The starter car is owned, not bought — it needs a row like any other
+		// car so the active-car join finds a build to race.
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO player_cars (player_id, chassis_id, acquired_at) VALUES (?, ?, ?)`,
+			id, game.StarterChassis, now.Unix()); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx,
@@ -144,16 +151,24 @@ func (s *Store) SeedBots(ctx context.Context, count int) (int, error) {
 			if _, err := tx.ExecContext(ctx, `INSERT INTO players
 				(id, device_hash, display_name, is_bot, cash, rubies, driver_level, driver_xp,
 				 unspent_points, stat_bravery, stat_intelligence, stat_reflexes, stat_consistency,
-				 stat_stamina, chassis_id, tier_engine, tier_turbo, tier_tires, tier_suspension,
-				 tier_weight, livery_id, ladder_rank, wins, losses, free_races, races_reset_at,
-				 created_at, updated_at)
-				VALUES (?, NULL, ?, 1, 0, 0, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
+				 stat_stamina, chassis_id, livery_id, ladder_rank, wins, losses, free_races,
+				 races_reset_at, created_at, updated_at)
+				VALUES (?, NULL, ?, 1, 0, 0, ?, 0, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`,
 				id, botName(rng), level,
 				stats.Bravery, stats.Intelligence, stats.Reflexes, stats.Consistency, stats.Stamina,
-				chassis, tiers.Engine, tiers.Turbo, tiers.Tires, tiers.Suspension, tiers.Weight,
-				game.Liveries[rng.IntN(len(game.Liveries))].ID, rank,
+				chassis, game.Liveries[rng.IntN(len(game.Liveries))].ID, rank,
 				int(strength*120)+rng.IntN(20), int((1-strength)*60)+rng.IntN(20),
 				game.NextDailyReset(now).Unix(), now.Unix(), now.Unix()); err != nil {
+				return err
+			}
+
+			// A bot owns exactly the car it drives. They go through the same
+			// active-car join as a human, so the ladder needs no special case.
+			if _, err := tx.ExecContext(ctx, `INSERT INTO player_cars
+				(player_id, chassis_id, tier_engine, tier_turbo, tier_tires, tier_suspension, tier_weight, acquired_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				id, chassis, tiers.Engine, tiers.Turbo, tiers.Tires, tiers.Suspension, tiers.Weight,
+				now.Unix()); err != nil {
 				return err
 			}
 

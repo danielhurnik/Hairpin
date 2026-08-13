@@ -260,6 +260,71 @@ func (s *Server) buyUpgrade(w http.ResponseWriter, r *http.Request, p *store.Pla
 	})
 }
 
+// ---------------------------------------------------------------------------
+// Cars
+// ---------------------------------------------------------------------------
+
+type carReq struct {
+	ChassisID string `json:"chassis_id"`
+}
+
+// carsPayload is the showroom: every car, what it costs, and what it would
+// race at. Shared by all three car endpoints so a buy or a switch renders the
+// updated list without a second round trip.
+func (s *Server) carsPayload(w http.ResponseWriter, r *http.Request, p *store.Player, extra map[string]any) {
+	build, _, err := s.store.BuildFor(r.Context(), p)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	cars, err := s.store.Cars(r.Context(), p, build)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	body := map[string]any{
+		"player": p,
+		"active": p.ChassisID,
+		"build":  build,
+		"rating": game.OverallRating(build),
+		"cars":   cars,
+	}
+	for k, v := range extra {
+		body[k] = v
+	}
+	writeJSON(w, http.StatusOK, body)
+}
+
+func (s *Server) cars(w http.ResponseWriter, r *http.Request, p *store.Player) {
+	s.carsPayload(w, r, p, nil)
+}
+
+func (s *Server) buyCar(w http.ResponseWriter, r *http.Request, p *store.Player) {
+	var req carReq
+	if !decode(w, r, &req) {
+		return
+	}
+	p2, paid, err := s.store.BuyChassis(r.Context(), p.ID, req.ChassisID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.carsPayload(w, r, p2, map[string]any{"paid": paid, "bought": req.ChassisID})
+}
+
+func (s *Server) equipCar(w http.ResponseWriter, r *http.Request, p *store.Player) {
+	var req carReq
+	if !decode(w, r, &req) {
+		return
+	}
+	p2, err := s.store.SetActiveCar(r.Context(), p.ID, req.ChassisID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.carsPayload(w, r, p2, nil)
+}
+
 type allocateReq struct {
 	Stat   string `json:"stat"`
 	Points int    `json:"points"`

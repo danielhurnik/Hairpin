@@ -32,6 +32,7 @@ var (
 	ErrMaxTier        = errors.New("already at maximum tier")
 	ErrNoOpponent     = errors.New("no opponent available")
 	ErrAlreadyOwned   = errors.New("already owned")
+	ErrLevelLocked    = errors.New("driver level too low")
 	ErrOfferPurchased = errors.New("offer already purchased")
 )
 
@@ -60,6 +61,10 @@ func Open(dsn string, opts Options) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if err := migrateCars(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate cars: %w", err)
+	}
 	ts := opts.TimeScale
 	if ts <= 0 {
 		ts = 1
@@ -69,6 +74,59 @@ func Open(dsn string, opts Options) (*Store, error) {
 		nowFn = time.Now
 	}
 	return &Store{db: db, timeScale: ts, now: nowFn}, nil
+}
+
+// migrateCars moves upgrade tiers off `players` and onto `player_cars`.
+//
+// schema.sql handles anything expressible as CREATE ... IF NOT EXISTS; this is
+// for the one change that has to carry data. It is guarded on the old column
+// still being present, so it runs exactly once and is a no-op on a database
+// created fresh from the current schema. The whole thing is one transaction:
+// either every player keeps their build on a car row, or nothing moves.
+func migrateCars(db *sql.DB) error {
+	old, err := hasColumn(db, "players", "tier_engine")
+	if err != nil || !old {
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Every existing player had exactly one implicit car — the one named by
+	// players.chassis_id. Give them that car, with the build they already paid
+	// for, so nobody logs in to a stock engine.
+	if _, err := tx.Exec(`INSERT OR IGNORE INTO player_cars
+		(player_id, chassis_id, tier_engine, tier_turbo, tier_tires, tier_suspension, tier_weight, acquired_at)
+		SELECT id, chassis_id, tier_engine, tier_turbo, tier_tires, tier_suspension, tier_weight, created_at
+		FROM players`); err != nil {
+		return err
+	}
+	for _, col := range []string{"tier_engine", "tier_turbo", "tier_tires", "tier_suspension", "tier_weight"} {
+		if _, err := tx.Exec(`ALTER TABLE players DROP COLUMN ` + col); err != nil {
+			return fmt.Errorf("drop %s: %w", col, err)
+		}
+	}
+	return tx.Commit()
+}
+
+func hasColumn(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query(`SELECT name FROM pragma_table_info(?)`, table)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, rows.Err()
+		}
+	}
+	return false, rows.Err()
 }
 
 func (s *Store) Close() error   { return s.db.Close() }
@@ -136,11 +194,22 @@ type InventoryItem struct {
 	AcquiredAt time.Time       `json:"acquired_at"`
 }
 
-const playerCols = `id, display_name, is_bot, cash, rubies, driver_level, driver_xp,
-	unspent_points, stat_bravery, stat_intelligence, stat_reflexes, stat_consistency,
-	stat_stamina, chassis_id, tier_engine, tier_turbo, tier_tires, tier_suspension,
-	tier_weight, livery_id, ladder_rank, wins, losses, free_races, extra_races_used,
-	races_reset_at, created_at`
+// playerCols reads a player together with the car they are currently in, so
+// Player.Tiers always means "the active car's tiers" and every consumer —
+// race, ladder, garage — keeps working without knowing cars moved tables.
+//
+// Always paired with playerFrom, which supplies the `p` and `c` aliases.
+// COALESCE means a missing car row reads as a stock car rather than dropping
+// the player out of the ladder: the join can degrade, but it cannot delete.
+const playerCols = `p.id, p.display_name, p.is_bot, p.cash, p.rubies, p.driver_level, p.driver_xp,
+	p.unspent_points, p.stat_bravery, p.stat_intelligence, p.stat_reflexes, p.stat_consistency,
+	p.stat_stamina, p.chassis_id, COALESCE(c.tier_engine, 0), COALESCE(c.tier_turbo, 0),
+	COALESCE(c.tier_tires, 0), COALESCE(c.tier_suspension, 0), COALESCE(c.tier_weight, 0),
+	p.livery_id, p.ladder_rank, p.wins, p.losses, p.free_races, p.extra_races_used,
+	p.races_reset_at, p.created_at`
+
+const playerFrom = ` FROM players p
+	LEFT JOIN player_cars c ON c.player_id = p.id AND c.chassis_id = p.chassis_id `
 
 func scanPlayer(row interface{ Scan(...any) error }) (*Player, error) {
 	var p Player
@@ -166,7 +235,7 @@ func scanPlayer(row interface{ Scan(...any) error }) (*Player, error) {
 }
 
 func getPlayer(ctx context.Context, q queryer, id string) (*Player, error) {
-	return scanPlayer(q.QueryRowContext(ctx, `SELECT `+playerCols+` FROM players WHERE id = ?`, id))
+	return scanPlayer(q.QueryRowContext(ctx, `SELECT `+playerCols+playerFrom+` WHERE p.id = ?`, id))
 }
 
 func (s *Store) GetPlayer(ctx context.Context, id string) (*Player, error) {

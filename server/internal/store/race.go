@@ -41,11 +41,11 @@ func findOpponent(ctx context.Context, q queryer, p *Player) (*Player, error) {
 		sql  string
 		args []any
 	}{
-		{`SELECT ` + playerCols + ` FROM players WHERE id != ? AND ladder_rank >= ? AND ladder_rank < ?
+		{`SELECT ` + playerCols + playerFrom + ` WHERE p.id != ? AND p.ladder_rank >= ? AND p.ladder_rank < ?
 		  ORDER BY RANDOM() LIMIT 1`, []any{p.ID, lo, p.Rank}},
-		{`SELECT ` + playerCols + ` FROM players WHERE id != ? AND ladder_rank > ? AND ladder_rank <= ?
+		{`SELECT ` + playerCols + playerFrom + ` WHERE p.id != ? AND p.ladder_rank > ? AND p.ladder_rank <= ?
 		  ORDER BY RANDOM() LIMIT 1`, []any{p.ID, p.Rank, p.Rank + game.LadderBandAbove}},
-		{`SELECT ` + playerCols + ` FROM players WHERE id != ? ORDER BY RANDOM() LIMIT 1`, []any{p.ID}},
+		{`SELECT ` + playerCols + playerFrom + ` WHERE p.id != ? ORDER BY RANDOM() LIMIT 1`, []any{p.ID}},
 	}
 	for _, qq := range queries {
 		op, err := scanPlayer(q.QueryRowContext(ctx, qq.sql, qq.args...))
@@ -288,8 +288,8 @@ func (s *Store) Ladder(ctx context.Context, viewerID string, from, limit int) ([
 	if from < 1 {
 		from = 1
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT `+playerCols+` FROM players
-		WHERE ladder_rank >= ? ORDER BY ladder_rank ASC LIMIT ?`, from, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+playerCols+playerFrom+`
+		WHERE p.ladder_rank >= ? ORDER BY p.ladder_rank ASC LIMIT ?`, from, limit)
 	if err != nil {
 		return nil, err
 	}
