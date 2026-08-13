@@ -10,6 +10,7 @@ export const API_URL =
 
 const DEVICE_KEY = 'hairpin.device_id';
 const TOKEN_KEY = 'hairpin.token';
+const AUTH_PATH = '/v1/auth/device';
 
 // SecureStore has no web implementation; fall back to localStorage there so
 // `npm run web` works for development.
@@ -35,17 +36,6 @@ const storage = {
     }
     await SecureStore.setItemAsync(key, value);
   },
-  async remove(key: string): Promise<void> {
-    if (Platform.OS === 'web') {
-      try {
-        globalThis.localStorage?.removeItem(key);
-      } catch {
-        /* ignore */
-      }
-      return;
-    }
-    await SecureStore.deleteItemAsync(key);
-  },
 };
 
 export class ApiError extends Error {
@@ -70,7 +60,13 @@ async function deviceId(): Promise<string> {
   return fresh;
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+/**
+ * Sends one request. A 401 means the session token expired or the server
+ * rotated its signing secret — the device secret is still good, so we
+ * re-register and replay the request once rather than dumping the player back
+ * to an error screen. `retry` guards against looping if auth itself 401s.
+ */
+async function request<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
   const res = await fetch(API_URL + path, {
     method,
     headers: {
@@ -79,6 +75,12 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+
+  if (res.status === 401 && retry && path !== AUTH_PATH) {
+    await res.text(); // drain so the connection can be reused
+    await registerDevice();
+    return request<T>(method, path, body, false);
+  }
 
   const raw = await res.text();
   let parsed: unknown = null;
@@ -97,37 +99,33 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return parsed as T;
 }
 
+/** Trades the device secret for a fresh session token. */
+async function registerDevice(): Promise<void> {
+  const res = await request<{ token: string }>(
+    'POST',
+    AUTH_PATH,
+    { device_id: await deviceId() },
+    false
+  );
+  token = res.token;
+  await storage.set(TOKEN_KEY, res.token);
+}
+
 export const api = {
   get: <T,>(path: string) => request<T>('GET', path),
   post: <T,>(path: string, body?: unknown) => request<T>('POST', path, body),
 
   /**
-   * Signs in with the stored device secret, reusing a cached token when one is
-   * still valid. A 401 means the token expired or the server rotated its
-   * secret — either way, re-registering the same device recovers the account.
+   * Restores a cached session, or registers the device if there isn't one.
+   * A stale cached token costs nothing to try — the first request that sees a
+   * 401 re-registers and replays itself.
    */
   async signIn(): Promise<void> {
     const cached = await storage.get(TOKEN_KEY);
     if (cached) {
       token = cached;
-      try {
-        await request('GET', '/v1/me');
-        return;
-      } catch (err) {
-        if (!(err instanceof ApiError) || err.status !== 401) throw err;
-        token = null;
-      }
+      return;
     }
-    const res = await request<{ token: string }>('POST', '/v1/auth/device', {
-      device_id: await deviceId(),
-    });
-    token = res.token;
-    await storage.set(TOKEN_KEY, res.token);
-  },
-
-  /** Drops the session but keeps the device secret, so the account survives. */
-  async signOut(): Promise<void> {
-    token = null;
-    await storage.remove(TOKEN_KEY);
+    await registerDevice();
   },
 };

@@ -2,10 +2,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Text, View } from 'react-native';
 import { ApiError, api } from '../../src/api';
 import { CarArt, DriverStatBlock, LiveryColors, RarityBadge, st } from '../../src/components/game';
+import { RaceHistory } from '../../src/components/history';
+import { GapMeter, SectorTable } from '../../src/components/replay';
 import { Banner, Button, Card, Loading, Row, Screen, SectionLabel } from '../../src/components/ui';
 import { useGame } from '../../src/state';
 import { colors, rarityColor, space, text as t } from '../../src/theme';
-import type { Opponent, RaceOutcome, SegmentResult } from '../../src/types';
+import type { Opponent, RaceOutcome } from '../../src/types';
 
 type OpponentResponse = {
   opponent: Opponent;
@@ -141,6 +143,8 @@ export default function RaceScreen() {
           <Button title="Different opponent" variant="ghost" onPress={loadPreview} />
         </>
       )}
+
+      <RaceHistory />
     </Screen>
   );
 }
@@ -239,9 +243,7 @@ function ReplayView({
 
       <Card>
         <SectionLabel>Sector times</SectionLabel>
-        {shown.map((seg) => (
-          <SegmentRow key={seg.index} seg={seg} />
-        ))}
+        <SectorTable segments={shown} />
         {!done && <Loading />}
       </Card>
 
@@ -303,74 +305,5 @@ function ReplayView({
 
       {!done && <Button title="Skip to result" variant="ghost" onPress={onSkip} />}
     </Screen>
-  );
-}
-
-/** A centre-zero bar: fills right when you lead, left when you trail. */
-function GapMeter({ gap }: { gap: number }) {
-  const clamped = Math.max(-3, Math.min(3, gap));
-  const pct = (Math.abs(clamped) / 3) * 50;
-  const ahead = gap >= 0;
-  return (
-    <View style={{ gap: space(1) }}>
-      <View
-        style={{
-          height: 10,
-          backgroundColor: colors.raised,
-          borderRadius: 5,
-          flexDirection: 'row',
-          overflow: 'hidden',
-        }}>
-        <View style={{ flex: 1, alignItems: 'flex-end', flexDirection: 'row', justifyContent: 'flex-end' }}>
-          {!ahead && (
-            <View style={{ width: `${pct * 2}%`, height: '100%', backgroundColor: colors.red }} />
-          )}
-        </View>
-        <View style={{ width: 2, backgroundColor: colors.borderBright }} />
-        <View style={{ flex: 1, flexDirection: 'row' }}>
-          {ahead && (
-            <View style={{ width: `${pct * 2}%`, height: '100%', backgroundColor: colors.green }} />
-          )}
-        </View>
-      </View>
-      <Text
-        style={[
-          st.gapCell,
-          { alignSelf: 'center', width: 'auto', color: ahead ? colors.green : colors.red, fontSize: 16 },
-        ]}>
-        {ahead ? '+' : ''}
-        {gap.toFixed(2)}
-      </Text>
-    </View>
-  );
-}
-
-function SegmentRow({ seg }: { seg: SegmentResult }) {
-  const won = seg.challenger_time < seg.opponent_time;
-  return (
-    <View style={st.segRow}>
-      <Text style={[st.timeCell, { color: won ? colors.green : colors.textDim }]}>
-        {seg.challenger_time.toFixed(2)}
-      </Text>
-      <View style={{ flex: 1 }}>
-        <Text style={[t.small, { color: colors.text }]}>{seg.name}</Text>
-        {(seg.challenger_mistake || seg.opponent_mistake) && (
-          <Text style={[t.tiny, { color: colors.red }]}>
-            {seg.challenger_mistake && seg.opponent_mistake
-              ? 'both ran wide'
-              : seg.challenger_mistake
-                ? 'you ran wide'
-                : 'rival ran wide'}
-          </Text>
-        )}
-      </View>
-      <Text style={[st.timeCell, { color: !won ? colors.green : colors.textDim }]}>
-        {seg.opponent_time.toFixed(2)}
-      </Text>
-      <Text style={[st.gapCell, { color: seg.gap >= 0 ? colors.green : colors.red }]}>
-        {seg.gap >= 0 ? '+' : ''}
-        {seg.gap.toFixed(2)}
-      </Text>
-    </View>
   );
 }

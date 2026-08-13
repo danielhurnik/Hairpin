@@ -1,16 +1,17 @@
 import React, { useState } from 'react';
-import { Text, View } from 'react-native';
-import { ApiError } from '../../src/api';
+import { Text, TextInput, View } from 'react-native';
+import { ApiError, api } from '../../src/api';
 import { RarityBadge, st } from '../../src/components/game';
 import { Bar, Banner, Button, Card, Empty, Row, Screen, SectionLabel } from '../../src/components/ui';
 import { useGame } from '../../src/state';
-import { colors, rarityColor, slotLabel, space, statBlurb, statLabel, text as t } from '../../src/theme';
+import { colors, radius, rarityColor, slotLabel, space, statBlurb, statLabel, text as t } from '../../src/theme';
 import type { InventoryItem } from '../../src/types';
 
 export default function DriverScreen() {
   const { state, act, refresh } = useGame();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState(false);
 
   if (!state) return null;
   const p = state.player;
@@ -36,9 +37,31 @@ export default function DriverScreen() {
 
       <Card>
         <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <View>
+          <View style={{ flex: 1 }}>
             <Text style={t.label}>Driver</Text>
-            <Text style={t.title}>{p.display_name}</Text>
+            {renaming ? (
+              <NameEditor
+                current={p.display_name}
+                busy={busy === 'name'}
+                onCancel={() => setRenaming(false)}
+                onSave={(name) =>
+                  run('name', async () => {
+                    await api.post('/v1/me/name', { name });
+                    await refresh();
+                    setRenaming(false);
+                  })
+                }
+              />
+            ) : (
+              <Row gap={2}>
+                <Text style={t.title}>{p.display_name}</Text>
+                <Text
+                  style={[t.small, { color: colors.accent }]}
+                  onPress={() => setRenaming(true)}>
+                  edit
+                </Text>
+              </Row>
+            )}
           </View>
           <View style={{ alignItems: 'flex-end' }}>
             <Text style={t.label}>Level</Text>
@@ -176,5 +199,60 @@ function ItemCard({
         />
       </Row>
     </Card>
+  );
+}
+
+/** Handle editing. The server enforces the 3–20 character rule; this only
+ *  keeps the obviously-invalid cases from becoming a round trip. */
+function NameEditor({
+  current,
+  busy,
+  onSave,
+  onCancel,
+}: {
+  current: string;
+  busy: boolean;
+  onSave: (name: string) => void;
+  onCancel: () => void;
+}) {
+  const [draft, setDraft] = useState(current);
+  const trimmed = draft.trim();
+  const valid = trimmed.length >= 3 && trimmed.length <= 20;
+
+  return (
+    <View style={{ gap: space(2), marginTop: space(1) }}>
+      <TextInput
+        value={draft}
+        onChangeText={setDraft}
+        autoFocus
+        maxLength={20}
+        selectTextOnFocus
+        placeholder="Your handle on the mountain"
+        placeholderTextColor={colors.textFaint}
+        style={{
+          color: colors.text,
+          fontSize: 18,
+          fontWeight: '700',
+          backgroundColor: colors.surfaceAlt,
+          borderWidth: 1,
+          borderColor: valid ? colors.borderBright : colors.red,
+          borderRadius: radius.md,
+          paddingHorizontal: space(3),
+          paddingVertical: space(2),
+        }}
+      />
+      <Row gap={2}>
+        <Button
+          title="Save"
+          variant="primary"
+          style={{ flex: 1 }}
+          disabled={!valid || trimmed === current}
+          busy={busy}
+          onPress={() => onSave(trimmed)}
+        />
+        <Button title="Cancel" variant="ghost" style={{ flex: 1 }} onPress={onCancel} />
+      </Row>
+      {!valid && <Text style={t.tiny}>3 to 20 characters.</Text>}
+    </View>
   );
 }

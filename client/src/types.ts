@@ -246,3 +246,18 @@ export type GameState = {
   liveries: LiveryOption[];
   server_time: string;
 };
+
+export type RaceSummary = {
+  race_id: string;
+  opponent: string;
+  track_id: string;
+  track_name: string;
+  won: boolean;
+  margin: number;
+  cash: number;
+  xp: number;
+  rank_before: number;
+  rank_after: number;
+  drop_item?: string;
+  at: string;
+};
