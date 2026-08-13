@@ -125,15 +125,16 @@ func (s *Store) RunRace(ctx context.Context, playerID string) (*RaceOutcome, err
 		var spentRuby int64
 		switch {
 		case p.FreeRaces > 0:
-			if _, err := tx.ExecContext(ctx,
-				`UPDATE players SET free_races = free_races - 1 WHERE id = ? AND free_races > 0`, playerID); err != nil {
+			if err := execGuarded(ctx, tx, ErrNoRaces,
+				`UPDATE players SET free_races = free_races - 1 WHERE id = ? AND free_races > 0`,
+				playerID); err != nil {
 				return err
 			}
 			p.FreeRaces--
 		case p.ExtraUsed >= game.MaxExtraRaces:
 			return ErrNoRaces
 		case p.Rubies >= game.ExtraRaceRubies:
-			if _, err := tx.ExecContext(ctx,
+			if err := execGuarded(ctx, tx, ErrNoRaces,
 				`UPDATE players SET rubies = rubies - ?, extra_races_used = extra_races_used + 1
 				 WHERE id = ? AND rubies >= ?`,
 				game.ExtraRaceRubies, playerID, game.ExtraRaceRubies); err != nil {

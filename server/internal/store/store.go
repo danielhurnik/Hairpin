@@ -278,3 +278,26 @@ func applyDailyReset(ctx context.Context, q queryer, p *Player, now time.Time) e
 		p.FreeRaces, reset.Unix(), p.ID)
 	return err
 }
+
+// execGuarded runs a conditional UPDATE — the `AND cash >= ?` style guards on
+// every currency path — and reports whether it actually changed a row.
+//
+// Checking the result is what makes those guards load-bearing. Today the pool
+// is capped at one connection, so transactions serialise and the guard can
+// never lose; under Postgres with concurrent transactions it can, and an
+// unchecked no-op would report a successful purchase that never happened.
+// `notEnough` is returned in that case.
+func execGuarded(ctx context.Context, q queryer, notEnough error, query string, args ...any) error {
+	res, err := q.ExecContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return notEnough
+	}
+	return nil
+}

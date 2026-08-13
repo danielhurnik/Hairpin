@@ -103,7 +103,7 @@ func (s *Store) BuyUpgrade(ctx context.Context, playerID, category string) (*Pla
 		if !ok {
 			return ErrInvalid
 		}
-		if _, err := tx.ExecContext(ctx,
+		if err := execGuarded(ctx, tx, ErrInsufficient,
 			fmt.Sprintf(`UPDATE players SET cash = cash - ?, %s = ?, updated_at = ? WHERE id = ? AND cash >= ?`, col),
 			cost, tier+1, s.Now().Unix(), playerID, cost); err != nil {
 			return err
@@ -153,7 +153,7 @@ func (s *Store) AllocateStat(ctx context.Context, playerID, stat string, points 
 		if !ok {
 			return ErrInvalid
 		}
-		if _, err := tx.ExecContext(ctx,
+		if err := execGuarded(ctx, tx, ErrInsufficient,
 			fmt.Sprintf(`UPDATE players SET %s = %s + ?, unspent_points = unspent_points - ?, updated_at = ?
 				WHERE id = ? AND unspent_points >= ?`, col, col),
 			points, points, s.Now().Unix(), playerID, points); err != nil {
@@ -241,7 +241,8 @@ func (s *Store) BuyLivery(ctx context.Context, playerID, liveryID string) (*Play
 			if p.Rubies < def.PriceRuby {
 				return ErrInsufficient
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE players SET rubies = rubies - ?, updated_at = ? WHERE id = ? AND rubies >= ?`,
+			if err := execGuarded(ctx, tx, ErrInsufficient,
+				`UPDATE players SET rubies = rubies - ?, updated_at = ? WHERE id = ? AND rubies >= ?`,
 				def.PriceRuby, now.Unix(), playerID, def.PriceRuby); err != nil {
 				return err
 			}
@@ -249,7 +250,8 @@ func (s *Store) BuyLivery(ctx context.Context, playerID, liveryID string) (*Play
 			if p.Cash < def.PriceCash {
 				return ErrInsufficient
 			}
-			if _, err := tx.ExecContext(ctx, `UPDATE players SET cash = cash - ?, updated_at = ? WHERE id = ? AND cash >= ?`,
+			if err := execGuarded(ctx, tx, ErrInsufficient,
+				`UPDATE players SET cash = cash - ?, updated_at = ? WHERE id = ? AND cash >= ?`,
 				def.PriceCash, now.Unix(), playerID, def.PriceCash); err != nil {
 				return err
 			}

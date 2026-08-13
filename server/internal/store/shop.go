@@ -111,7 +111,7 @@ func (s *Store) BuyOffer(ctx context.Context, playerID, offerID string) (*Invent
 			if p.Rubies < offer.PriceRuby {
 				return ErrInsufficient
 			}
-			if _, err := tx.ExecContext(ctx,
+			if err := execGuarded(ctx, tx, ErrInsufficient,
 				`UPDATE players SET rubies = rubies - ?, updated_at = ? WHERE id = ? AND rubies >= ?`,
 				offer.PriceRuby, now.Unix(), playerID, offer.PriceRuby); err != nil {
 				return err
@@ -120,7 +120,7 @@ func (s *Store) BuyOffer(ctx context.Context, playerID, offerID string) (*Invent
 			if p.Cash < offer.PriceCash {
 				return ErrInsufficient
 			}
-			if _, err := tx.ExecContext(ctx,
+			if err := execGuarded(ctx, tx, ErrInsufficient,
 				`UPDATE players SET cash = cash - ?, updated_at = ? WHERE id = ? AND cash >= ?`,
 				offer.PriceCash, now.Unix(), playerID, offer.PriceCash); err != nil {
 				return err
