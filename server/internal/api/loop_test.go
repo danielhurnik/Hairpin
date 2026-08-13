@@ -789,3 +789,175 @@ func TestEmptyCollectionsAreArraysNotNull(t *testing.T) {
 		t.Error("inventory items serialised as null when empty")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Cars
+// ---------------------------------------------------------------------------
+
+// carsView is the shape the showroom returns.
+type carsView struct {
+	Player struct {
+		ID        string `json:"id"`
+		Cash      int64  `json:"cash"`
+		ChassisID string `json:"chassis_id"`
+	} `json:"player"`
+	Active string  `json:"active"`
+	Rating float64 `json:"rating"`
+	Cars   []struct {
+		ID       string  `json:"id"`
+		Name     string  `json:"name"`
+		Price    int64   `json:"price"`
+		MinLevel int     `json:"min_level"`
+		Owned    bool    `json:"owned"`
+		Active   bool    `json:"active"`
+		Buyable  bool    `json:"buyable"`
+		Rating   float64 `json:"rating"`
+		Upgrades struct {
+			Engine int `json:"engine"`
+		} `json:"upgrades"`
+	} `json:"cars"`
+}
+
+func (v carsView) car(t *testing.T, id string) int {
+	t.Helper()
+	for i, c := range v.Cars {
+		if c.ID == id {
+			return i
+		}
+	}
+	t.Fatalf("chassis %s missing from the showroom", id)
+	return -1
+}
+
+// grant tops a player up so a test can reach the showroom without grinding.
+func (h *harness) grant(cash int64, level int) {
+	h.t.Helper()
+	var id string
+	if err := h.store.DB().QueryRow(`SELECT id FROM players WHERE device_hash IS NOT NULL LIMIT 1`).Scan(&id); err != nil {
+		h.t.Fatalf("find player: %v", err)
+	}
+	if _, err := h.store.DB().Exec(`UPDATE players SET cash = ?, driver_level = ? WHERE id = ?`,
+		cash, level, id); err != nil {
+		h.t.Fatalf("grant: %v", err)
+	}
+}
+
+// TestBuyAndDriveASecondCar walks the whole feature over HTTP: look at the
+// showroom, buy a car, switch to it, and race it.
+func TestBuyAndDriveASecondCar(t *testing.T) {
+	h := newHarness(t, 20)
+
+	var before carsView
+	h.do("GET", "/v1/cars", nil, &before)
+	starter := before.Cars[before.car(t, game.StarterChassis)]
+	if !starter.Owned || !starter.Active {
+		t.Fatalf("starter should be owned and active, got owned=%v active=%v", starter.Owned, starter.Active)
+	}
+	if before.Cars[before.car(t, "eg_hatch")].Owned {
+		t.Fatal("player starts owning a car they never bought")
+	}
+
+	target, _ := game.ChassisByID("eg_hatch")
+	h.grant(target.Price+1000, target.MinLevel)
+
+	var bought carsView
+	h.do("POST", "/v1/cars/buy", map[string]any{"chassis_id": "eg_hatch"}, &bought)
+	if bought.Player.Cash != 1000 {
+		t.Errorf("cash %d after buying, want 1000", bought.Player.Cash)
+	}
+	if !bought.Cars[bought.car(t, "eg_hatch")].Owned {
+		t.Error("bought car is not owned")
+	}
+	// Buying does not put you in it — that is a separate choice.
+	if bought.Active != game.StarterChassis {
+		t.Errorf("active car became %s on purchase", bought.Active)
+	}
+
+	var driving carsView
+	h.do("POST", "/v1/cars/equip", map[string]any{"chassis_id": "eg_hatch"}, &driving)
+	if driving.Active != "eg_hatch" || driving.Player.ChassisID != "eg_hatch" {
+		t.Fatalf("active car is %s, want eg_hatch", driving.Active)
+	}
+
+	// The new car races. Its build is its own, so the garage now prices
+	// upgrades from stock.
+	var garage struct {
+		Upgrades []struct {
+			Category string `json:"category"`
+			Tier     int    `json:"tier"`
+		} `json:"upgrades"`
+	}
+	h.do("GET", "/v1/garage", nil, &garage)
+	for _, u := range garage.Upgrades {
+		if u.Tier != 0 {
+			t.Errorf("%s reads tier %d on a freshly bought car, want 0", u.Category, u.Tier)
+		}
+	}
+
+	var raced struct {
+		Replay struct {
+			TrackName string `json:"track_name"`
+			Segments  []struct {
+				Name string `json:"name"`
+			} `json:"segments"`
+		} `json:"replay"`
+	}
+	h.do("POST", "/v1/race/start", nil, &raced)
+	if raced.Replay.TrackName == "" || len(raced.Replay.Segments) < 8 {
+		t.Error("racing the newly bought car produced no full replay")
+	}
+}
+
+// The showroom is a currency path, so it gets the same scrutiny as the rest.
+func TestCarPurchaseCannotBeCheated(t *testing.T) {
+	h := newHarness(t, 20)
+
+	// Old enough to be sold the car, nowhere near able to afford it. The level
+	// gate is checked first, so this needs the level granted to reach the
+	// cash check at all.
+	target, _ := game.ChassisByID("eg_hatch")
+	h.grant(target.Price-1, target.MinLevel)
+	if code := h.try("POST", "/v1/cars/buy", map[string]any{"chassis_id": "eg_hatch"}, nil); code != http.StatusPaymentRequired {
+		t.Errorf("unaffordable car returned %d, want 402", code)
+	}
+
+	// Rich enough for the best car in the game, nowhere near the level.
+	h.grant(10_000_000, 1)
+	if code := h.try("POST", "/v1/cars/buy", map[string]any{"chassis_id": "r_gt"}, nil); code != http.StatusConflict {
+		t.Errorf("under-level purchase returned %d, want 409", code)
+	}
+
+	// A price named by the client is not a price.
+	if code := h.try("POST", "/v1/cars/buy",
+		map[string]any{"chassis_id": "r_gt", "price": 1}, nil); code != http.StatusBadRequest {
+		t.Errorf("request with unknown fields returned %d, want 400", code)
+	}
+
+	// Chassis that do not exist, and the starter, are both refused.
+	if code := h.try("POST", "/v1/cars/buy", map[string]any{"chassis_id": "f1_car"}, nil); code != http.StatusBadRequest {
+		t.Errorf("bogus chassis returned %d, want 400", code)
+	}
+	if code := h.try("POST", "/v1/cars/buy", map[string]any{"chassis_id": game.StarterChassis}, nil); code != http.StatusBadRequest {
+		t.Errorf("re-buying the starter returned %d, want 400", code)
+	}
+
+	// You cannot drive what you do not own.
+	if code := h.try("POST", "/v1/cars/equip", map[string]any{"chassis_id": "gc_awd"}, nil); code != http.StatusNotFound {
+		t.Errorf("driving an unowned car returned %d, want 404", code)
+	}
+
+	// Buying the same car twice takes the money once.
+	h.grant(10_000_000, 50)
+	h.do("POST", "/v1/cars/buy", map[string]any{"chassis_id": "gc_awd"}, nil)
+	var after carsView
+	h.do("GET", "/v1/cars", nil, &after)
+	spent := int64(10_000_000) - after.Player.Cash
+	if code := h.try("POST", "/v1/cars/buy", map[string]any{"chassis_id": "gc_awd"}, nil); code != http.StatusConflict {
+		t.Errorf("second purchase returned %d, want 409", code)
+	}
+	var final carsView
+	h.do("GET", "/v1/cars", nil, &final)
+	if got := int64(10_000_000) - final.Player.Cash; got != spent {
+		t.Errorf("spent %d across two purchase attempts, want %d", got, spent)
+	}
+}

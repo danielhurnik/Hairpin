@@ -119,6 +119,36 @@ export type LadderEntry = {
   is_you: boolean;
 };
 
+export type CarOption = {
+  id: string;
+  name: string;
+  drivetrain: string;
+  power: number;
+  weight: number;
+  grip: number;
+  handling: number;
+  braking: number;
+  price: number;
+  min_level: number;
+  blurb: string;
+  owned: boolean;
+  active: boolean;
+  buyable: boolean;
+  affordable: boolean;
+  level_met: boolean;
+  upgrades: {
+    engine: number;
+    turbo: number;
+    tires: number;
+    suspension: number;
+    weight: number;
+  };
+  /** What this car would race at right now, with your driver and equipment. */
+  rating: number;
+  /** Difference against the car you are currently in. Can be negative. */
+  rating_delta: number;
+};
+
 export type LiveryOption = {
   id: string;
   name: string;
@@ -242,6 +272,7 @@ export type GameState = {
   active_job: ActiveJob | null;
   job_board: JobOffer[];
   garage: UpgradeOption[];
+  cars: CarOption[];
   ladder: LadderEntry[];
   liveries: LiveryOption[];
   server_time: string;

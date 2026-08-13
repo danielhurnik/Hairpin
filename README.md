@@ -198,6 +198,19 @@ buys the most power but adds variance (lag), weight reduction is cheap and
 quiet. The garage shows the exact rating delta each purchase would buy,
 computed with the same model that resolves races.
 
+**Cars** — seven chassis, ¥12,000 to ¥160,000, gated by driver level as well as
+by price. You own them rather than trade them in: switching between owned cars
+is free, and each car keeps its own upgrade tiers.
+
+That last part is the whole design. A newly bought chassis arrives **stock**,
+so it is usually *slower* than the car you have been building for hours — the
+showroom says so out loud rather than hiding it. A full rebuild is ¥187,250 on
+top of the sticker price, which makes the purchase the gate and the rebuild the
+sink, and gives the upgrade ladder somewhere to go once the first car is maxed.
+
+Tiers therefore live on `player_cars`, one row per owned car, and
+`players.chassis_id` is a pointer to whichever one is being raced.
+
 **Driver attributes** — bravery, intelligence, reflexes, consistency, stamina.
 Three points per level, spent by the player, and they genuinely change how a
 race runs rather than adding a flat bonus:
@@ -285,6 +298,10 @@ GET  /v1/garage
 POST /v1/garage/upgrade     { category }
 POST /v1/driver/allocate    { stat, points }
 
+GET  /v1/cars
+POST /v1/cars/buy           { chassis_id }
+POST /v1/cars/equip         { chassis_id }
+
 GET  /v1/inventory
 POST /v1/inventory/equip    { item_id }
 POST /v1/inventory/unequip  { item_id }
@@ -347,13 +364,16 @@ are genuinely not finished, in the order they should be addressed:
 5. **No abuse telemetry.** The rate limiter blunts brute force, but there is no
    alerting on anomalous currency gain — which is what actually catches
    exploits in production.
-6. **One chassis.** The other six exist and the ladder bots drive them; buying
-   a car is not implemented.
+6. **Cars are not balanced against each other.** All seven are buyable and
+   drivable, but price does not track rating monotonically — the R-Series GT
+   costs ¥50,000 more than the GC-Series AWD and rates lower, because it is
+   1560kg with 50 handling. That may be the right call for a trade-off car, or
+   the prices may need another pass.
 
 ## What Milestone 2 might be
 
 - Teams, and team battles against another team's five saved builds
-- Chassis purchases and per-chassis tuning setups
+- Per-chassis tuning setups (chassis purchases themselves are in)
 - Track-specific tuning (gearing for Happogahara vs Akina)
 - Weather and surface state on the pass
 - A real ladder season with resets and rewards

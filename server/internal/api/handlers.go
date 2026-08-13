@@ -144,6 +144,11 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request, p *store.Player) 
 		writeErr(w, err)
 		return
 	}
+	cars, err := s.store.Cars(ctx, p, build)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"player":      p,
 		"build":       build,
@@ -153,6 +158,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request, p *store.Player) 
 		"active_job":  job,
 		"job_board":   s.store.JobBoard(ctx, p),
 		"garage":      s.store.GarageOptions(ctx, p, build),
+		"cars":        cars,
 		"ladder":      ladder,
 		"liveries":    liveries,
 		"server_time": s.store.Now(),
