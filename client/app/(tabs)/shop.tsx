@@ -88,6 +88,7 @@ export default function ShopScreen() {
           cash={state.player.cash}
           rubies={state.player.rubies}
           busy={busy === l.id}
+          chassisId={state.player.chassis_id}
           onBuy={() => run(l.id, () => act('/v1/liveries/buy', { livery_id: l.id }))}
           onEquip={() => run(l.id, () => act('/v1/liveries/equip', { livery_id: l.id }))}
         />
@@ -181,6 +182,7 @@ function LiveryCard({
   cash,
   rubies,
   busy,
+  chassisId,
   onBuy,
   onEquip,
 }: {
@@ -188,6 +190,7 @@ function LiveryCard({
   cash: number;
   rubies: number;
   busy: boolean;
+  chassisId: string;
   onBuy: () => void;
   onEquip: () => void;
 }) {
@@ -203,7 +206,7 @@ function LiveryCard({
         {livery.equipped && <Text style={[t.small, { color: colors.accent }]}>on the car</Text>}
       </Row>
       <View style={{ alignItems: 'center' }}>
-        <CarArt primary={primary} secondary={secondary} width={180} />
+        <CarArt primary={primary} secondary={secondary} width={84} chassisId={chassisId} />
       </View>
       {livery.owned ? (
         livery.equipped ? null : (

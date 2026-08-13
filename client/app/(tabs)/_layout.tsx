@@ -3,14 +3,12 @@ import React from 'react';
 import { Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Money } from '../../src/components/game';
+import { PixelIcon } from '../../src/pixel/sprite';
 import { useGame } from '../../src/state';
 import { colors, space, text as t } from '../../src/theme';
 
-/** Text glyphs rather than an icon font — one less dependency to install. */
-function TabIcon({ glyph, focused }: { glyph: string; focused: boolean }) {
-  return (
-    <Text style={{ fontSize: 18, color: focused ? colors.accent : colors.textFaint }}>{glyph}</Text>
-  );
+function TabIcon({ name, focused }: { name: string; focused: boolean }) {
+  return <PixelIcon name={name} color={focused ? colors.accent : colors.textFaint} size={22} />;
 }
 
 /** Always-visible currency and rank, so the numbers on screen are the server's. */
@@ -63,42 +61,42 @@ export default function TabsLayout() {
           name="index"
           options={{
             title: 'Garage',
-            tabBarIcon: ({ focused }) => <TabIcon glyph="⚙" focused={focused} />,
+            tabBarIcon: ({ focused }) => <TabIcon name="garage" focused={focused} />,
           }}
         />
         <Tabs.Screen
           name="jobs"
           options={{
             title: 'Jobs',
-            tabBarIcon: ({ focused }) => <TabIcon glyph="⏱" focused={focused} />,
+            tabBarIcon: ({ focused }) => <TabIcon name="jobs" focused={focused} />,
           }}
         />
         <Tabs.Screen
           name="race"
           options={{
             title: 'Race',
-            tabBarIcon: ({ focused }) => <TabIcon glyph="🏁" focused={focused} />,
+            tabBarIcon: ({ focused }) => <TabIcon name="race" focused={focused} />,
           }}
         />
         <Tabs.Screen
           name="ladder"
           options={{
             title: 'Ladder',
-            tabBarIcon: ({ focused }) => <TabIcon glyph="▲" focused={focused} />,
+            tabBarIcon: ({ focused }) => <TabIcon name="ladder" focused={focused} />,
           }}
         />
         <Tabs.Screen
           name="driver"
           options={{
             title: 'Driver',
-            tabBarIcon: ({ focused }) => <TabIcon glyph="☗" focused={focused} />,
+            tabBarIcon: ({ focused }) => <TabIcon name="driver" focused={focused} />,
           }}
         />
         <Tabs.Screen
           name="shop"
           options={{
             title: "K's Office",
-            tabBarIcon: ({ focused }) => <TabIcon glyph="◆" focused={focused} />,
+            tabBarIcon: ({ focused }) => <TabIcon name="shop" focused={focused} />,
           }}
         />
       </Tabs>

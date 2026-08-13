@@ -2,108 +2,26 @@ import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { colors, radius, rarityColor, rarityLabel, space, statLabel, text as t } from '../theme';
 import type { Build, CarStats, DriverStats, LiveryOption } from '../types';
+import { PixelCar } from '../pixel/sprite';
 import { Bar, Pill, Row } from './ui';
 
 /**
- * A side-profile car drawn from plain Views, tinted by the equipped livery.
- * No image assets and no SVG dependency — it scales cleanly and every livery
- * in the game gets a distinct look for free.
+ * A top-down car in 8-bit, tinted by the equipped livery. The chassis decides
+ * the silhouette, so the ladder shows what people actually drive.
+ * Sprites are portrait (nose up), so `width` stays small.
  */
 export function CarArt({
   primary,
   secondary,
-  width = 260,
+  width = 120,
+  chassisId = 'ae_coupe',
 }: {
   primary: string;
   secondary: string;
   width?: number;
+  chassisId?: string;
 }) {
-  const h = width * 0.34;
-  return (
-    <View style={{ width, height: h, justifyContent: 'flex-end' }}>
-      {/* greenhouse */}
-      <View
-        style={{
-          position: 'absolute',
-          left: width * 0.26,
-          top: h * 0.04,
-          width: width * 0.42,
-          height: h * 0.42,
-          backgroundColor: secondary,
-          borderTopLeftRadius: width * 0.07,
-          borderTopRightRadius: width * 0.05,
-        }}
-      />
-      {/* glass */}
-      <View
-        style={{
-          position: 'absolute',
-          left: width * 0.29,
-          top: h * 0.1,
-          width: width * 0.34,
-          height: h * 0.26,
-          backgroundColor: '#0D1016',
-          borderTopLeftRadius: width * 0.05,
-          borderTopRightRadius: width * 0.03,
-          opacity: 0.9,
-        }}
-      />
-      {/* body */}
-      <View
-        style={{
-          position: 'absolute',
-          left: 0,
-          top: h * 0.42,
-          width,
-          height: h * 0.36,
-          backgroundColor: primary,
-          borderRadius: width * 0.03,
-        }}
-      />
-      {/* lower accent */}
-      <View
-        style={{
-          position: 'absolute',
-          left: 0,
-          top: h * 0.72,
-          width,
-          height: h * 0.07,
-          backgroundColor: secondary,
-          borderBottomLeftRadius: width * 0.02,
-          borderBottomRightRadius: width * 0.02,
-        }}
-      />
-      {/* headlight */}
-      <View
-        style={{
-          position: 'absolute',
-          right: width * 0.01,
-          top: h * 0.46,
-          width: width * 0.05,
-          height: h * 0.1,
-          backgroundColor: colors.accent,
-          borderRadius: 2,
-        }}
-      />
-      {/* wheels */}
-      {[0.14, 0.74].map((x) => (
-        <View
-          key={x}
-          style={{
-            position: 'absolute',
-            left: width * x,
-            bottom: 0,
-            width: width * 0.14,
-            height: width * 0.14,
-            borderRadius: width * 0.07,
-            backgroundColor: '#0A0B0E',
-            borderWidth: 3,
-            borderColor: '#3A4150',
-          }}
-        />
-      ))}
-    </View>
-  );
+  return <PixelCar chassisId={chassisId} primary={primary} secondary={secondary} width={width} />;
 }
 
 export function LiveryColors(livery: LiveryOption | undefined) {

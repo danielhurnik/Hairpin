@@ -176,7 +176,7 @@ function OpponentCard({ opponent, yourRating }: { opponent: Opponent; yourRating
       </Row>
 
       <View style={{ alignItems: 'center' }}>
-        <CarArt primary={primary} secondary={secondary} width={200} />
+        <CarArt primary={primary} secondary={secondary} width={92} chassisId={opponent.chassis_id} />
       </View>
 
       {opponent.notable_items?.length ? (

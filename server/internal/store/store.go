@@ -189,7 +189,9 @@ func equippedFor(ctx context.Context, q queryer, playerID string) ([]InventoryIt
 }
 
 func scanInventory(rows *sql.Rows) ([]InventoryItem, error) {
-	var out []InventoryItem
+	// Non-nil so an empty inventory marshals as [] rather than null. A new
+	// player has nothing equipped, and the client maps over these directly.
+	out := []InventoryItem{}
 	for rows.Next() {
 		var it InventoryItem
 		var eq int

@@ -756,3 +756,36 @@ func TestDropsEventuallyIncludeLegendaries(t *testing.T) {
 	}
 	fmt.Printf("  legendary drop rate at max quality: %.2f%%\n", rate*100)
 }
+
+// A brand-new account has an empty inventory and nothing equipped. Those
+// fields must marshal as [] and not null: the client maps over them directly,
+// and a null crashed the driver screen for every first-time player.
+func TestEmptyCollectionsAreArraysNotNull(t *testing.T) {
+	h := newHarness(t, 5)
+
+	var raw map[string]json.RawMessage
+	h.do("GET", "/v1/state", nil, &raw)
+
+	for _, field := range []string{"equipped", "inventory", "job_board", "garage", "ladder", "liveries"} {
+		v, ok := raw[field]
+		if !ok {
+			t.Errorf("state is missing %q", field)
+			continue
+		}
+		if string(v) == "null" {
+			t.Errorf("%q serialised as null; the client maps over it", field)
+		}
+	}
+
+	var hist map[string]json.RawMessage
+	h.do("GET", "/v1/race/history", nil, &hist)
+	if string(hist["races"]) == "null" {
+		t.Error("race history serialised as null before any race")
+	}
+
+	var inv map[string]json.RawMessage
+	h.do("GET", "/v1/inventory", nil, &inv)
+	if string(inv["items"]) == "null" {
+		t.Error("inventory items serialised as null when empty")
+	}
+}

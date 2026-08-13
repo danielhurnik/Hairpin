@@ -43,7 +43,7 @@ export default function GarageScreen() {
         </Row>
 
         <View style={{ alignItems: 'center', paddingVertical: space(2) }}>
-          <CarArt primary={primary} secondary={secondary} />
+          <CarArt primary={primary} secondary={secondary} chassisId={state.player.chassis_id} />
         </View>
 
         <CarStatBlock car={state.build.car} />
