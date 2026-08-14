@@ -147,6 +147,7 @@ func (s *Store) SeedBots(ctx context.Context, count int) (int, error) {
 			level := 1 + int(strength*44) + rng.IntN(3)
 			stats := botStats(rng, level, strength)
 			chassis := botChassis(rng, strength)
+			setup := botSetup(rng, strength, tiers)
 
 			if _, err := tx.ExecContext(ctx, `INSERT INTO players
 				(id, device_hash, display_name, is_bot, cash, rubies, driver_level, driver_xp,
@@ -165,10 +166,13 @@ func (s *Store) SeedBots(ctx context.Context, count int) (int, error) {
 			// A bot owns exactly the car it drives. They go through the same
 			// active-car join as a human, so the ladder needs no special case.
 			if _, err := tx.ExecContext(ctx, `INSERT INTO player_cars
-				(player_id, chassis_id, tier_engine, tier_turbo, tier_tires, tier_suspension, tier_weight, acquired_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+				(player_id, chassis_id, tier_engine, tier_turbo, tier_tires, tier_suspension, tier_weight,
+				 setup_gearing, setup_boost, setup_pressure, setup_ballast, setup_ride, setup_camber,
+				 setup_damping, acquired_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				id, chassis, tiers.Engine, tiers.Turbo, tiers.Tires, tiers.Suspension, tiers.Weight,
-				now.Unix()); err != nil {
+				setup.Gearing, setup.Boost, setup.Pressure, setup.Ballast, setup.Ride, setup.Camber,
+				setup.Damping, now.Unix()); err != nil {
 				return err
 			}
 
@@ -208,6 +212,50 @@ func botTiers(rng *rand.Rand, strength float64) game.UpgradeTiers {
 	return game.UpgradeTiers{
 		Engine: pick(), Turbo: pick(), Tires: pick(), Suspension: pick(), Weight: pick(),
 	}
+}
+
+// botSetup gives a rival a sheet of its own.
+//
+// Without this every bot raced on factory settings, which quietly handed any
+// player who tunes a free edge on every single race — and the edge is worth
+// about 5%, so it was not a small gift. It also made the ladder dishonest:
+// the whole conceit is that a rival is another player's saved build, and no
+// real player leaves the car exactly as it left the workshop.
+//
+// A bot is set up for *something* rather than for the road it happens to be
+// racing on, which is exactly the position a human is in when they cannot be
+// bothered to re-tune. So the player's edge survives — it is just earned by
+// reading tonight's pass rather than granted by the rivals being asleep.
+//
+// Weak bots barely touch the car; the top of the mountain runs committed
+// sheets, which is also where the game's own crash model starts to bite them.
+func botSetup(rng *rand.Rand, strength float64, tiers game.UpgradeTiers) game.Setup {
+	if strength < 0.22 {
+		return game.Setup{} // still figuring out which end the engine is in
+	}
+	// How far from factory this driver is willing to go.
+	reach := 1
+	if strength > 0.62 {
+		reach = 2
+	}
+	// How many axes they have actually thought about.
+	touched := 2 + int(strength*4)
+
+	var s game.Setup
+	order := rng.Perm(len(game.SetupAxes))
+	for i, idx := range order {
+		if i >= touched {
+			break
+		}
+		axis := game.SetupAxes[idx]
+		if !game.AxisUnlocked(axis, tiers) {
+			continue
+		}
+		v := rng.IntN(2*reach+1) - reach
+		s, _ = s.With(axis.ID, v)
+	}
+	// Whatever they set, they cannot adjust a part they have not fitted.
+	return game.LegalSetup(s, tiers)
 }
 
 func botStats(rng *rand.Rand, level int, strength float64) game.DriverStats {

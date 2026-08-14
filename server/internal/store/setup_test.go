@@ -221,3 +221,88 @@ func TestTuningDoesNotMoveTheGarageRating(t *testing.T) {
 		t.Errorf("overall rating moved %.4f -> %.4f on a fully wound setup", baseRating, got)
 	}
 }
+
+// Rivals have to turn up with the car set up for something. Racing a ladder
+// full of factory sheets hands anyone who tunes a free edge on every single
+// race — and tuning is worth about 5%, so it is not a small gift.
+func TestBotsArriveWithSetupsOfTheirOwn(t *testing.T) {
+	st, _, _ := newTestStore(t, 60)
+	ctx := context.Background()
+
+	rows, err := st.DB().QueryContext(ctx, `SELECT c.setup_gearing, c.setup_boost, c.setup_pressure,
+		c.setup_ballast, c.setup_ride, c.setup_camber, c.setup_damping, p.ladder_rank
+		FROM player_cars c JOIN players p ON p.id = c.player_id WHERE p.is_bot = 1
+		ORDER BY p.ladder_rank`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	var tunedTop, tunedBottom, total, top int
+	for rows.Next() {
+		var s game.Setup
+		var rank int
+		if err := rows.Scan(&s.Gearing, &s.Boost, &s.Pressure, &s.Ballast,
+			&s.Ride, &s.Camber, &s.Damping, &rank); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		total++
+		if s != (game.Setup{}) {
+			if rank <= 20 {
+				tunedTop++
+			} else {
+				tunedBottom++
+			}
+		}
+		if rank <= 20 {
+			top++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+	if total == 0 {
+		t.Fatal("no bots seeded")
+	}
+	// The top of the mountain knows what it is doing.
+	if tunedTop < top*3/4 {
+		t.Errorf("only %d of the top %d rivals had touched the car", tunedTop, top)
+	}
+	// The bottom mostly has not, which is what makes climbing feel like
+	// climbing rather than like meeting the same driver twenty times.
+	if tunedBottom >= total-top {
+		t.Errorf("every one of the %d lower rivals is tuned; nobody is a novice",
+			total-top)
+	}
+}
+
+// A bot cannot adjust a part it never bought, exactly like a player.
+func TestBotSetupsRespectTheirOwnParts(t *testing.T) {
+	st, _, _ := newTestStore(t, 60)
+	ctx := context.Background()
+
+	rows, err := st.DB().QueryContext(ctx, `SELECT tier_engine, tier_turbo, tier_tires,
+		tier_suspension, tier_weight, setup_gearing, setup_boost, setup_pressure,
+		setup_ballast, setup_ride, setup_camber, setup_damping
+		FROM player_cars c JOIN players p ON p.id = c.player_id WHERE p.is_bot = 1`)
+	if err != nil {
+		t.Fatalf("query: %v", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var tiers game.UpgradeTiers
+		var s game.Setup
+		if err := rows.Scan(&tiers.Engine, &tiers.Turbo, &tiers.Tires, &tiers.Suspension,
+			&tiers.Weight, &s.Gearing, &s.Boost, &s.Pressure, &s.Ballast,
+			&s.Ride, &s.Camber, &s.Damping); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if legal := game.LegalSetup(s, tiers); legal != s {
+			t.Fatalf("a bot is running %+v on tiers %+v, which strips to %+v", s, tiers, legal)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+}

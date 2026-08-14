@@ -369,6 +369,17 @@ that did the damage:
 
 It says what the car did. It never says which way to turn the spanner.
 
+### Rivals tune too
+
+Seeded rivals carry setups of their own, deterministic from the seed. Nobody at
+the bottom of the ladder has touched the car; the top runs committed sheets,
+which is also where the crash model starts to bite them.
+
+They are set up for *something* rather than for the road they happen to be
+racing on — the position a human is in when they cannot be bothered to re-tune.
+So a player's edge from reading tonight's pass survives, but it is earned
+rather than granted by the rivals being asleep.
+
 ### Risk is a separate axis from speed
 
 Spread and mistakes are not the same kind of thing, and the difference is what
@@ -545,11 +556,6 @@ are genuinely not finished, in the order they should be addressed:
    costs ¥50,000 more than the GC-Series AWD and rates lower, because it is
    1560kg with 50 handling. That may be the right call for a trade-off car, or
    the prices may need another pass.
-7. **Bots do not tune.** Seeded rivals race on a factory sheet, so a player who
-   sets the car up for the pass carries a small edge into every race. It is the
-   right edge to give a human, but it should be a *choice* they can get wrong,
-   which means bots need setups of their own — deterministic from their id, so
-   they are set up for something rather than for this particular track.
 8. **Two passes barely respond to setup.** Happogahara moves five of the seven
    axes; Usui moves one. That is defensible variety, but Usui in particular is
    close to a screen with nothing to decide on it.
