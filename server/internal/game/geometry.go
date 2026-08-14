@@ -117,6 +117,14 @@ type Segment struct {
 	LateralG float64 `json:"lateral_g"`
 	// Rhythm is true when this corner reverses the previous one's direction.
 	Rhythm bool `json:"rhythm,omitempty"`
+
+	// --- conditions, stamped on per race by ApplyConditions ---
+
+	// Wet is 0..1 for this run. Cold is a separate 0..1 for rubber that never
+	// came up to temperature. Both are zero on the reference dry track that
+	// every rating is quoted against.
+	Wet  float64 `json:"wet,omitempty"`
+	Cold float64 `json:"cold,omitempty"`
 }
 
 // Reference physics. These set the scale of the whole game: a reference car

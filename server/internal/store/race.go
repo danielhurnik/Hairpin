@@ -104,6 +104,14 @@ type RaceOutcome struct {
 	FreeRaces  int             `json:"free_races_left"`
 	Player     *Player         `json:"player"`
 	YourRating float64         `json:"your_rating"`
+	// Crashed and Repair are the price of a sheet that asked too much of the
+	// road. A crash ends the run, so there is no reward to go with it.
+	Crashed bool  `json:"crashed,omitempty"`
+	Repair  int64 `json:"repair_cost,omitempty"`
+	// SetupNotes are what the car did on the night. This is the only feedback
+	// the game gives about a sheet, and it arrives here rather than on the
+	// tuning screen: you find out by racing.
+	SetupNotes []game.SetupNote `json:"setup_notes,omitempty"`
 }
 
 // RunRace is the whole race transaction: spend an attempt, pick an opponent,
@@ -123,6 +131,7 @@ func (s *Store) RunRace(ctx context.Context, playerID string) (*RaceOutcome, err
 
 		// --- pay for the attempt ---
 		var spentRuby int64
+		var repair int64
 		switch {
 		case p.FreeRaces > 0:
 			if err := execGuarded(ctx, tx, ErrNoRaces,
@@ -167,8 +176,12 @@ func (s *Store) RunRace(ctx context.Context, playerID string) (*RaceOutcome, err
 		// it comes from the same pure function the opponent screen used rather
 		// than from the seed. Only the running of the race is random.
 		seed := randomUint64()
+		// Both the road and the weather were shown before the car was set up,
+		// and both come from the same pure functions the preview used.
 		track := game.NextTrackFor(p.ID, p.Wins+p.Losses)
-		result := game.SimulateRace(track, myBuild, opBuild, seed)
+		cond := game.ConditionsFor(p.ID, p.Wins+p.Losses, track)
+		result := game.SimulateRace(game.ApplyConditions(track, cond), myBuild, opBuild, seed)
+		result.Conditions = cond
 
 		reward := game.RaceRewardFor(result.ChallWon, opRow.Rank, p.Level)
 		level, xp, points := game.ApplyXP(p.Level, p.XP, reward.XP)
@@ -194,11 +207,26 @@ func (s *Store) RunRace(ctx context.Context, playerID string) (*RaceOutcome, err
 		if result.ChallWon {
 			winInc, lossInc = 1, 0
 		}
+
+		// --- the repair bill ---
+		//
+		// Putting the car back together is the price of a sheet with no margin
+		// in it. It is deducted rather than guarded, and clamped at whatever
+		// the player actually has: a crash can empty a wallet but never push
+		// it below zero, because a player who cannot afford to be solvent
+		// cannot work a job to get out of it either.
+		if result.ChallCrashed {
+			repair = game.RepairBill(p.ChassisID, p.Tiers)
+			if repair > p.Cash+reward.Cash {
+				repair = p.Cash + reward.Cash
+			}
+		}
+
 		if _, err := tx.ExecContext(ctx, `UPDATE players
-			SET cash = cash + ?, driver_level = ?, driver_xp = ?, unspent_points = unspent_points + ?,
+			SET cash = cash + ? - ?, driver_level = ?, driver_xp = ?, unspent_points = unspent_points + ?,
 			    wins = wins + ?, losses = losses + ?, updated_at = ?
 			WHERE id = ?`,
-			reward.Cash, level, xp, points, winInc, lossInc, now.Unix(), playerID); err != nil {
+			reward.Cash, repair, level, xp, points, winInc, lossInc, now.Unix(), playerID); err != nil {
 			return err
 		}
 
@@ -248,6 +276,8 @@ func (s *Store) RunRace(ctx context.Context, playerID string) (*RaceOutcome, err
 			Reward: reward, RankBefore: rankBefore, RankAfter: rankAfter, Drop: drop,
 			SpentRuby: spentRuby, FreeRaces: after.FreeRaces, Player: after,
 			YourRating: round2(game.OverallRating(myBuild)),
+			Crashed:    result.ChallCrashed, Repair: repair,
+			SetupNotes: game.SetupFeedback(myBuild, game.ApplyConditions(track, cond)),
 		}
 		if level > p.Level {
 			out.LeveledTo = level

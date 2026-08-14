@@ -523,6 +523,7 @@ func (s *Server) opponent(w http.ResponseWriter, r *http.Request, p *store.Playe
 		"opponent":    op,
 		"your_rating": game.OverallRating(build),
 		"track":       s.store.NextTrack(p),
+		"conditions":  s.store.NextConditions(p),
 		"free_races":  p.FreeRaces,
 		"extra_cost":  game.ExtraRaceRubies,
 	})

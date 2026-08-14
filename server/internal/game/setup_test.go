@@ -388,3 +388,100 @@ func TestTheBestSetupDependsOnTheCar(t *testing.T) {
 		t.Error("a power car and a grip car want the identical sheet")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Crashing
+// ---------------------------------------------------------------------------
+
+// crashRate runs a build down a pass many times and reports how often it ends
+// against the barrier.
+func crashRate(b, rival Build, t TrackDef, c Conditions, runs int) float64 {
+	road := ApplyConditions(t, c)
+	crashes := 0
+	for i := 0; i < runs; i++ {
+		r := SimulateRace(road, b, rival, uint64(i)*6364136223846793005+1)
+		if r.ChallCrashed {
+			crashes++
+		}
+	}
+	return float64(crashes) / float64(runs)
+}
+
+// A car on the settings it left the workshop with should get down the mountain.
+// A sheet with nothing left in reserve, on a wet night, on the nastiest pass in
+// the game, should be a genuine gamble — and the difference between those two
+// is what makes an aggressive setup a decision.
+func TestCrashesArePricedForRisk(t *testing.T) {
+	usui, _ := TrackByID("usui")
+	happo, _ := TrackByID("happogahara")
+	rival := referenceBuild()
+
+	factory := referenceBuild()
+	wild := WithSetup(referenceBuild(),
+		Setup{Ride: 2, Damping: 2, Camber: 2, Boost: 2, Pressure: -2})
+
+	dry := Dry()
+	wet := Conditions{Damp: 0.8, TempC: 6}
+
+	factoryDry := crashRate(factory, rival, usui, dry, 4000)
+	factoryWet := crashRate(factory, rival, usui, wet, 4000)
+	wildWet := crashRate(wild, rival, usui, wet, 4000)
+	wildWide := crashRate(wild, rival, happo, wet, 4000)
+
+	t.Logf("Usui  factory dry %.2f%%   factory wet %.2f%%   wild wet %.2f%%", factoryDry*100, factoryWet*100, wildWet*100)
+	t.Logf("Happo wild wet %.2f%%", wildWide*100)
+
+	if factoryDry > 0.02 {
+		t.Errorf("a factory car crashes %.2f%% of the time on a dry pass — far too often", factoryDry*100)
+	}
+	if wildWet <= factoryWet {
+		t.Errorf("a wild sheet crashes %.2f%% against a factory %.2f%% — aggression costs nothing",
+			wildWet*100, factoryWet*100)
+	}
+	if wildWet > 0.35 {
+		t.Errorf("a wild sheet crashes %.2f%% of the time — that is not a gamble, it is a wall", wildWet*100)
+	}
+	// A wide fast pass has to be more forgiving of the same sheet than a
+	// narrow broken one, or geometry is not reaching the crash model.
+	if wildWide >= wildWet {
+		t.Errorf("the same sheet crashes %.2f%% on wide Happogahara vs %.2f%% on narrow Usui",
+			wildWide*100, wildWet*100)
+	}
+}
+
+// Consistency is the stat that keeps a car on the road, so it has to pay here.
+func TestAConsistentDriverCrashesLess(t *testing.T) {
+	usui, _ := TrackByID("usui")
+	wet := Conditions{Damp: 0.8, TempC: 6}
+	sheet := Setup{Ride: 2, Damping: 2, Camber: 2}
+
+	sloppy := referenceBuild()
+	sloppy.Driver.Consistency = 6
+	sloppy = WithSetup(sloppy, sheet)
+
+	steady := referenceBuild()
+	steady.Driver.Consistency = 24
+	steady = WithSetup(steady, sheet)
+
+	a := crashRate(sloppy, referenceBuild(), usui, wet, 4000)
+	b := crashRate(steady, referenceBuild(), usui, wet, 4000)
+	t.Logf("same sheet, sloppy driver %.2f%% vs consistent %.2f%%", a*100, b*100)
+	if b >= a {
+		t.Errorf("consistency bought nothing: %.2f%% vs %.2f%%", b*100, a*100)
+	}
+}
+
+// The weather has to change what the car wants, or conditions are decoration.
+func TestTheWetWantsADifferentSheet(t *testing.T) {
+	akagi, _ := TrackByID("akagi_down")
+	base := referenceBuild()
+
+	dry := bestSetupFor(base, ApplyConditions(akagi, Dry()))
+	wet := bestSetupFor(base, ApplyConditions(akagi, Conditions{Damp: 0.8, TempC: 6}))
+
+	if dry == wet {
+		t.Errorf("the same sheet is optimal wet and dry: %+v", dry)
+	}
+	t.Logf("dry %+v", dry)
+	t.Logf("wet %+v", wet)
+}

@@ -38,6 +38,7 @@ type SetupView struct {
 	ChassisID   string          `json:"chassis_id"`
 	ChassisName string          `json:"chassis_name"`
 	Track       game.TrackDef   `json:"track"`
+	Conditions  game.Conditions `json:"conditions"`
 	Axes        []SetupAxisView `json:"axes"`
 	// AnyUnlocked is false for a stock car, which can adjust nothing at all.
 	AnyUnlocked bool `json:"any_unlocked"`
@@ -50,6 +51,14 @@ func (s *Store) NextTrack(p *Player) game.TrackDef {
 	return game.NextTrackFor(p.ID, p.Wins+p.Losses)
 }
 
+// NextConditions is the weather waiting on that road. Pinned the same way, and
+// shown before the car is set up: the pass is never the same twice, and being
+// told which version of it you are getting is what makes tuning a decision
+// rather than a coin toss.
+func (s *Store) NextConditions(p *Player) game.Conditions {
+	return game.ConditionsFor(p.ID, p.Wins+p.Losses, s.NextTrack(p))
+}
+
 // SetupFor builds the sheet for a player's active car.
 func (s *Store) SetupFor(ctx context.Context, p *Player) SetupView {
 	track := s.NextTrack(p)
@@ -60,6 +69,7 @@ func (s *Store) SetupFor(ctx context.Context, p *Player) SetupView {
 		ChassisID:   p.ChassisID,
 		ChassisName: chassis.Name,
 		Track:       track,
+		Conditions:  game.ConditionsFor(p.ID, p.Wins+p.Losses, track),
 		Axes:        make([]SetupAxisView, 0, len(game.SetupAxes)),
 	}
 

@@ -315,6 +315,10 @@ func setupModRaw(b Build, seg Segment, progress float64) float64 {
 	power := b.Car.PowerToWt / ReferencePowerToWt
 	grip := b.Car.Grip / ReferenceGrip
 	heavy := clamp(b.Car.Weight/1100, 0.75, 1.5)
+	// How little grip there is to go round tonight. Zero on the dry reference
+	// road, which is what keeps ratings and calibration quoted against one
+	// fixed condition while an actual race is quoted against the weather.
+	slick := clamp(seg.Wet*0.85+seg.Cold*0.6, 0, 1)
 
 	// --- Final drive: exit versus terminal speed -------------------------
 	if s.Gearing != 0 {
@@ -332,17 +336,22 @@ func setupModRaw(b Build, seg Segment, progress float64) float64 {
 		// A big single is all boost and all lag; a small bolt-on barely
 		// notices the controller either way.
 		snail := clamp(b.Car.TurboLag/0.012, 0.25, 1.6)
-		mod += setupGain * snail * (0.034*bo*openRoad(seg) - 0.028*bo*crawling(seg))
+		// On a greasy road a big lump of boost arriving mid-corner is a
+		// liability rather than a lap time.
+		mod += setupGain * snail * (0.034*bo*openRoad(seg) -
+			0.028*bo*crawling(seg)*(1+1.1*slick))
 	}
 
 	// --- Tyre pressure: grip now against grip later -----------------------
 	if s.Pressure != 0 {
 		soft := -float64(s.Pressure) / 2 // low pressure is the soft end
-		mod += setupGain * (0.030*soft*loaded(seg) - 0.026*soft*openRoad(seg))
+		// Soft is worth far more when there is no grip to begin with.
+		mod += setupGain * (0.030*soft*loaded(seg)*(1+0.75*slick) - 0.026*soft*openRoad(seg))
 		if soft > 0 {
 			// Heavy cars cook their tyres, and so do cars generating a lot of
-			// grip to begin with.
-			mod -= setupGain * 0.030 * soft * heat(seg, progress) * heavy * clamp(grip, 0.7, 1.5)
+			// grip to begin with — but nothing overheats on a wet cold road.
+			mod -= setupGain * 0.030 * soft * heat(seg, progress) * heavy *
+				clamp(grip, 0.7, 1.5) * (1 - 0.8*slick)
 		}
 	}
 
@@ -364,7 +373,9 @@ func setupModRaw(b Build, seg Segment, progress float64) float64 {
 		axis, _ := AxisByID("ride_height")
 		h := axis.Setting(s.Ride)
 		low := (100 - h) / 30 // +1 at 70mm, -1 at 130mm
-		mod += setupGain * 0.030 * low * loaded(seg)
+		// Slamming the car pays on a dry road and asks for trouble on a wet
+		// one, where the travel is what lets the tyre follow the surface.
+		mod += setupGain * 0.030 * low * loaded(seg) * (1 - 0.9*slick)
 		// Clearance is the real number: how much room is left once the road
 		// has finished moving. A heavy car uses more travel getting there, so
 		// it runs out sooner than a light one at the same ride height.
@@ -378,9 +389,11 @@ func setupModRaw(b Build, seg Segment, progress float64) float64 {
 		agg := float64(s.Camber) / 2
 		// Diminishing returns: a car already on a lot of grip has less to
 		// find by leaning the wheels over, and more to lose under braking.
-		gain := clamp(1.35-0.4*grip, 0.55, 1.35)
+		// Diminishing returns with grip, and in the wet the tyre wants to be
+		// flat on the road rather than leaning on an edge.
+		gain := clamp(1.35-0.4*grip, 0.55, 1.35) * (1 - 0.85*slick)
 		mod += setupGain * (0.040*agg*sustained(seg)*gain -
-			0.036*agg*(stopping(seg)*0.6+openRoad(seg)*0.4))
+			0.036*agg*(stopping(seg)*0.6+openRoad(seg)*0.4)*(1+0.5*slick))
 	}
 
 	// --- Damping: direction change against compliance ---------------------
@@ -538,4 +551,175 @@ func setupVariance(s Setup) SetupVariance {
 	v.SigmaMult = clamp(v.SigmaMult, 0.75, 1.45)
 	v.MistakeMult = clamp(v.MistakeMult, 0.80, 1.40)
 	return v
+}
+
+// ---------------------------------------------------------------------------
+// Binning it
+// ---------------------------------------------------------------------------
+
+const (
+	// CrashBase is the chance of losing a car per corner, before anything
+	// about the road, the sheet or the driver is taken into account. It is
+	// deliberately tiny: a factory car on a dry pass should essentially never
+	// crash, and a wild sheet on a wet one should be a real gamble.
+	CrashBase = 0.0016
+	// CrashAggressionCap stops the most extreme sheet ever becoming a
+	// certainty on a single corner.
+	CrashAggressionCap = 4.5
+)
+
+// crashAggression is how far a sheet is asking to be caught out.
+//
+// These are the settings that take away the car's margin rather than trading
+// one part of the road for another: no ride height to absorb a bump, no travel
+// left in the dampers, an edge of a tyre instead of the flat of it, and a lump
+// of boost arriving whenever it feels like it. None of them are wrong — they
+// are all quick somewhere — but a sheet with all of them on it is one bad
+// piece of road away from a repair bill.
+func crashAggression(s Setup) float64 {
+	a := 1.0
+	a += 0.42 * clamp(float64(s.Ride)/2, 0, 1)      // slammed
+	a += 0.34 * clamp(float64(s.Damping)/2, 0, 1)   // no compliance
+	a += 0.30 * clamp(float64(s.Camber)/2, 0, 1)    // on the edge of the tyre
+	a += 0.26 * clamp(float64(s.Boost)/2, 0, 1)     // sudden delivery
+	a += 0.18 * clamp(-float64(s.Pressure)/2, 0, 1) // soft and squirming
+	return clamp(a, 1, CrashAggressionCap)
+}
+
+// crashChance is the probability of throwing it away in one corner.
+//
+// Everything that makes a corner frightening is already in seg.Risk — no room,
+// no camber, no view, a broken surface, and a wet night — so this is that
+// number against how much margin the sheet left and how much the driver has in
+// hand. A calm sheet and a consistent driver bring it close to nothing.
+func crashChance(b Build, seg Segment) float64 {
+	// Only the genuinely difficult corners can catch you out.
+	bite := clamp((seg.Risk-0.35)/0.6, 0, 1)
+	if bite == 0 {
+		return 0
+	}
+	agg := crashAggression(b.Setup)
+
+	// Consistency is the stat that keeps it on the road; bravery is what puts
+	// you in a position to leave it in the first place.
+	steady := clamp(ReferenceDriverStat/math.Max(b.Driver.Consistency, 1), 0.45, 1.9)
+	brave := clamp(1+(b.Driver.Bravery-ReferenceDriverStat)/ReferenceDriverStat*0.30, 0.7, 1.7)
+
+	p := CrashBase * bite * (agg - 1 + 0.35) * steady * brave
+	return clamp(p, 0, 0.08)
+}
+
+// RepairBill is what putting the car straight costs after a crash: a
+// proportion of what has been spent on it, so the more there is to break the
+// more there is to fix. It is what makes an aggressive sheet a decision rather
+// than a free roll of the dice.
+func RepairBill(chassisID string, tiers UpgradeTiers) int64 {
+	value := int64(0)
+	if ch, ok := ChassisByID(chassisID); ok {
+		value += ch.Price
+	}
+	for _, cat := range UpgradeCategories {
+		tier, _ := tiers.Get(cat)
+		for i := 1; i <= tier; i++ {
+			if c, ok := UpgradeCost(cat, i); ok {
+				value += c
+			}
+		}
+	}
+	bill := value / 22
+	if bill < 250 {
+		bill = 250
+	}
+	if bill > 40000 {
+		bill = 40000
+	}
+	return bill
+}
+
+// ---------------------------------------------------------------------------
+// What the run told you
+// ---------------------------------------------------------------------------
+
+// SetupNote is one thing the car did, and where it did it. This is the only
+// feedback the game gives about a sheet, and it arrives after the race rather
+// than before it: the player is told what happened, never what to set.
+type SetupNote struct {
+	Segment string `json:"segment"`
+	Text    string `json:"text"`
+	// Cost is how much time the sheet gave away there, as a fraction. It is
+	// used to rank the notes and is not published.
+	Cost float64 `json:"-"`
+}
+
+// SetupFeedback reads back over the run and reports where the sheet hurt.
+//
+// Each note comes from the same term in the model that did the damage, so it
+// cannot flatter or mislead: if it says the car was grounding out, the ride
+// height genuinely cost time on that corner. What it deliberately never says
+// is which way to turn the spanner.
+func SetupFeedback(b Build, t TrackDef) []SetupNote {
+	s := b.Setup
+	if s == (Setup{}) {
+		return nil
+	}
+	var notes []SetupNote
+	n := len(t.Segments)
+	heavy := clamp(b.Car.Weight/1100, 0.75, 1.5)
+
+	for i, seg := range t.Segments {
+		progress := float64(i) / math.Max(1, float64(n-1))
+		slick := clamp(seg.Wet*0.85+seg.Cold*0.6, 0, 1)
+
+		if s.Ride > 0 {
+			axis, _ := AxisByID("ride_height")
+			h := axis.Setting(s.Ride)
+			if clear := h - seg.Surface.bumpAmplitude()*groundingFactor(seg)*heavy; clear < 30 {
+				cost := 0.055 * clamp((30-clear)/30, 0, 1) * rough(seg)
+				notes = append(notes, SetupNote{seg.Name,
+					"The floor found the road through " + seg.Name + ".", cost})
+			}
+		}
+		if s.Damping > 0 && rough(seg) > 0.5 {
+			notes = append(notes, SetupNote{seg.Name,
+				"The car skated over the broken surface in " + seg.Name + " instead of settling.",
+				0.032 * float64(s.Damping) / 2 * rough(seg) * heavy})
+		}
+		if s.Camber > 0 && stopping(seg) > 0.55 {
+			notes = append(notes, SetupNote{seg.Name,
+				"Not enough tyre on the road under braking for " + seg.Name + ".",
+				0.036 * float64(s.Camber) / 2 * stopping(seg) * (1 + 0.5*slick)})
+		}
+		if s.Boost > 0 && crawling(seg) > 0.5 {
+			notes = append(notes, SetupNote{seg.Name,
+				"You waited for the turbo on the way out of " + seg.Name + ".",
+				0.028 * float64(s.Boost) / 2 * crawling(seg) * (1 + 1.1*slick)})
+		}
+		if s.Pressure < 0 && heat(seg, progress) > 0.45 {
+			notes = append(notes, SetupNote{seg.Name,
+				"The tyres were long gone by " + seg.Name + ".",
+				0.030 * -float64(s.Pressure) / 2 * heat(seg, progress) * heavy * (1 - 0.8*slick)})
+		}
+		if s.Gearing > 0 && nearLimiter(seg) > 0.5 {
+			notes = append(notes, SetupNote{seg.Name,
+				"Bouncing off the limiter down " + seg.Name + ".",
+				0.030 * float64(s.Gearing) / 2 * nearLimiter(seg)})
+		}
+		if s.Gearing < 0 && crawling(seg) > 0.55 {
+			notes = append(notes, SetupNote{seg.Name,
+				"Nothing there off the corner in " + seg.Name + ".",
+				0.034 * -float64(s.Gearing) / 2 * crawling(seg)})
+		}
+	}
+
+	// Only the worst few are worth saying. A list of every compromise is a
+	// spreadsheet, and a spreadsheet is the thing this is trying not to be.
+	for i := 1; i < len(notes); i++ {
+		for j := i; j > 0 && notes[j].Cost > notes[j-1].Cost; j-- {
+			notes[j], notes[j-1] = notes[j-1], notes[j]
+		}
+	}
+	if len(notes) > 3 {
+		notes = notes[:3]
+	}
+	return notes
 }

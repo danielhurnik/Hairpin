@@ -140,6 +140,8 @@ type SegmentResult struct {
 	Gap          float64 `json:"gap"`
 	ChallMistake bool    `json:"challenger_mistake"`
 	OppMistake   bool    `json:"opponent_mistake"`
+	ChallCrash   bool    `json:"challenger_crash,omitempty"`
+	OppCrash     bool    `json:"opponent_crash,omitempty"`
 	Note         string  `json:"note,omitempty"`
 }
 
@@ -156,6 +158,13 @@ type RaceResult struct {
 	OppRating   float64         `json:"opponent_rating"`
 	LeadChanges int             `json:"lead_changes"`
 	Upset       bool            `json:"upset"`
+	// A crash ends the run there and then. The replay stops at the corner it
+	// happened on rather than pretending the rest of the pass was driven.
+	ChallCrashed bool   `json:"challenger_crashed,omitempty"`
+	OppCrashed   bool   `json:"opponent_crashed,omitempty"`
+	CrashSegment string `json:"crash_segment,omitempty"`
+	// Conditions the run was held in.
+	Conditions Conditions `json:"conditions"`
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +214,8 @@ func SimulateRace(track TrackDef, challenger, opponent Build, seed uint64) RaceR
 		oppMisRoll := rng.Float64()
 		challMisCost := rng.Float64()
 		oppMisCost := rng.Float64()
+		challCrashRoll := rng.Float64()
+		oppCrashRoll := rng.Float64()
 
 		ct, cMis := segmentTime(challenger, seg, progress, challForm[i], challNoise, challMisRoll, challMisCost)
 		ot, oMis := segmentTime(opponent, seg, progress, oppForm[i], oppNoise, oppMisRoll, oppMisCost)
@@ -212,6 +223,12 @@ func SimulateRace(track TrackDef, challenger, opponent Build, seed uint64) RaceR
 		challTotal += ct
 		oppTotal += ot
 		gap := oppTotal - challTotal
+
+		// Losing it. A sheet with no margin left in it, on a corner with no
+		// room in it, on a night with no grip in it — that is when a car ends
+		// up against the barrier rather than merely a length behind.
+		cCrash := !res.ChallCrashed && !res.OppCrashed && challCrashRoll < crashChance(challenger, seg)
+		oCrash := !res.ChallCrashed && !res.OppCrashed && !cCrash && oppCrashRoll < crashChance(opponent, seg)
 
 		leader := 0
 		switch {
@@ -238,13 +255,35 @@ func SimulateRace(track TrackDef, challenger, opponent Build, seed uint64) RaceR
 			Gap:          round3(gap),
 			ChallMistake: cMis,
 			OppMistake:   oMis,
+			ChallCrash:   cCrash,
+			OppCrash:     oCrash,
 			Note:         segmentNote(seg, cMis, oMis, gap, i, n),
 		})
+
+		if cCrash || oCrash {
+			last := &res.Segments[len(res.Segments)-1]
+			res.CrashSegment = seg.Name
+			if cCrash {
+				res.ChallCrashed = true
+				last.Note = "You lose it in " + seg.Name + ". The run ends against the barrier."
+			} else {
+				res.OppCrashed = true
+				last.Note = "Your rival throws it away in " + seg.Name + "."
+			}
+			break
+		}
 	}
 
 	res.ChallTotal = round3(challTotal)
 	res.OppTotal = round3(oppTotal)
-	res.ChallWon = challTotal < oppTotal
+	switch {
+	case res.ChallCrashed:
+		res.ChallWon = false
+	case res.OppCrashed:
+		res.ChallWon = true
+	default:
+		res.ChallWon = challTotal < oppTotal
+	}
 	res.Margin = round3(math.Abs(oppTotal - challTotal))
 	res.Upset = (res.ChallWon && res.ChallRating < res.OppRating) ||
 		(!res.ChallWon && res.OppRating < res.ChallRating)

@@ -136,9 +136,10 @@ from somewhere deliberate, or it leaks in somewhere accidental.
 
 ### How a race resolves
 
-A track is 10–12 segments (`straight`, `hairpin`, `sweeper`, `technical`,
-`braking`, `chicane`). Each segment weights car and driver attributes
-differently — a straight is 78% power, a hairpin is 38% handling and leans on
+A track is 10–12 pieces of road, each described by its geometry (see *The road
+is described, not labelled* below) and classified from it into a kind —
+`straight`, `hairpin`, `sweeper`, `technical`, `braking`, `chicane`. Each kind
+weights car and driver attributes differently — a straight is 78% power, a hairpin is 38% handling and leans on
 reflexes; a fast sweeper rewards bravery. Six tracks ship, from Akina's five
 consecutive hairpins to Happogahara's high-speed sweepers.
 
@@ -221,6 +222,51 @@ Adjusting is free and unlimited — the money went on the parts. You are told
 which pass you are racing before you commit, and it does not move until you
 have raced it.
 
+### The road is described, not labelled
+
+A corner has a radius, a length, a width, a camber, a gradient and a surface,
+plus whether it crests, whether it is blind, and which way it turns. Everything
+else is derived from that:
+
+- **How long it takes** comes from a quasi-steady-state speed pass — work out
+  what each corner allows, walk forwards limited by acceleration, backwards
+  limited by braking, then integrate accelerate-hold-brake across each piece of
+  road. Lap times land between 55 and 67 seconds across the six passes without
+  anyone typing a duration.
+- **How dangerous it is** comes from width, camber, sight, surface and how much
+  grip the corner is already using.
+- **What kind of corner it is** comes from its radius and what leads into it, so
+  the attribute weights hang off geometry rather than off a label.
+
+The passes are **authored approximations** of the real roads' character —
+Irohazaka's forty-eight one-way hairpins, Usui's damp stone-walled narrowness,
+Akina's five in a row — not surveys of them. No radius here is a measured one.
+
+Each is authored to disagree with itself: Happogahara is wide and fast and then
+drops to a second-gear corner on broken concrete, so the low, stiff,
+long-geared car that owns its straights has to give something back.
+
+### Conditions
+
+The pass is never the same twice. Damp and surface temperature are pinned per
+race by the same pure-function trick as the track, and revealed before you
+tune — so it is a decision, just never the same decision. Wet moves the answer
+a long way: on Akagi the optimum ride height flips from slammed to high.
+
+### Crashing
+
+A sheet with no margin left in it — no ride height to absorb a bump, no travel
+in the dampers, on the edge of the tyre — can put the car into the barrier. The
+run ends there and the repair bill is a proportion of what has been spent on
+the car.
+
+Measured on Usui, the nastiest pass in the game: a factory car crashes 0.33% of
+the time dry, and a fully wound sheet on a wet cold night 2.27%. The same wild
+sheet on wide, smooth Happogahara only crashes 0.35% — geometry reaches the
+crash model, so the risk is a property of the road as much as the car. A
+consistent driver on the same sheet crashes 0.88% where a sloppy one crashes
+3.02%.
+
 ### The rule that makes setup interesting
 
 **A setup moves performance around. It never creates any.**
@@ -243,8 +289,38 @@ Getting that exactly right took two corrections worth recording:
   divides by the build's own performance-weighted average of the modifier,
   which removes it exactly for every car.
 
-`TestSetupCannotRaiseOverallRating` and `TestNoAxisHasAUniversallyCorrectSetting`
-hold both properties down, and the calibration curve is unmoved at 65.3%.
+A perfect setup is worth about **5%** — roughly a ladder rung, so a well-tuned
+car beats a slightly better one that is not. Measured per pass it runs 3.1% to
+7.0%, averaging 4.6%.
+
+The optimum has to depend on the **car**, not only the road, or one published
+sheet per pass would serve everybody. Gearing reads power-to-weight, boost
+reads how laggy the turbo actually is, ride height and damping read weight,
+camber reads existing grip — and weight balance reads which axle drives, so
+moving mass forward helps a front-driven car out of a slow corner and hurts
+everything else. That last one is a sign change rather than a scale, which is
+what a layout needs in order to disagree.
+
+`TestSetupCannotRaiseOverallRating`, `TestNoAxisHasAUniversallyCorrectSetting`,
+`TestTheBestSetupDependsOnTheCar` and `TestASetupForOnePassIsWrongOnAnother`
+hold these down, and the calibration curve is unmoved at 65.2%.
+
+### You find out by racing
+
+Nothing predicts what a sheet is worth. The tuning screen shows the real
+settings — 85mm, 2.4 bar, 4.30 — the road, and the weather, and takes no view
+at all on whether any of it is right. There is no per-track score anywhere in
+the API, because a number that responds to every adjustment is a dial to
+optimise against, and the first player to solve it solves the pass for
+everybody.
+
+What you get instead arrives after the run, from the same terms in the model
+that did the damage:
+
+> · The floor found the road through The Gutter Corner.
+> · The car skated over the broken surface in The Gutter Corner instead of settling.
+
+It says what the car did. It never says which way to turn the spanner.
 
 ### Risk is a separate axis from speed
 
@@ -430,13 +506,20 @@ are genuinely not finished, in the order they should be addressed:
 8. **Two passes barely respond to setup.** Happogahara moves five of the seven
    axes; Usui moves one. That is defensible variety, but Usui in particular is
    close to a screen with nothing to decide on it.
-9. **There is no setup UI.** The sheet, the gates, and the hints are all
-   server-side and covered by tests; nothing renders it yet.
+9. **There is no setup UI.** The sheet, the gates, the geometry, the weather
+   and the post-race notes are all server-side and covered by tests; nothing
+   renders any of it yet.
+10. **Setup input is still notched, not continuous.** Every axis is physical
+    internally and displays a real value, but the player picks one of five
+    positions rather than typing 87mm. Exposing continuous input is now a
+    small change rather than a rewrite.
+11. **Happogahara pays more for a setup than the others** — 7.0% against a
+    3.1% floor on Usui. Authoring a second awkward section into it would even
+    that out.
 
 ## What Milestone 2 might be
 
 - Teams, and team battles against another team's five saved builds
 - Track-specific tuning (gearing for Happogahara vs Akina)
-- Weather and surface state on the pass
 - A real ladder season with resets and rewards
 - Item set bonuses (all Project D gear equipped)
