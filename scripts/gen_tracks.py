@@ -471,6 +471,7 @@ def build_track(points, tags=None, meta=None):
     """The whole pipeline, from raw points to segments."""
     meta = meta or {}
     tags = tags or {}
+    has_ele = any(p[2] is not None for p in points)
     pts = smooth(resample(project(points)))
     if len(pts) < 8:
         raise SystemExit('not enough points to work with (%d after resampling)' % len(pts))
@@ -485,6 +486,7 @@ def build_track(points, tags=None, meta=None):
     for s in segs:
         s['width'] = width
         s['surface'] = surface
+        s['gradient_measured'] = has_ele
     return pts, kappa, segs
 
 
@@ -533,6 +535,8 @@ def go_track(meta, segs):
     if meta.get('downhill'):
         lines.append('\t\tDownhill: true,')
     lines.append('\t\tFlavour: %s,' % go_str(meta.get('flavour', '')))
+    measured = bool(segs) and segs[0].get('gradient_measured')
+    lines.append('\t\tGradientMeasured: %s,' % ('true' if measured else 'false'))
     if meta.get('real_world'):
         lines.append('\t\tRealWorld: %s,' % go_str(meta['real_world']))
     lines.append('\t\tSegments: []Segment{')
@@ -543,7 +547,8 @@ def go_track(meta, segs):
             parts.append('Radius: %.0f' % s['radius'])
         parts.append('Length: %.0f' % s['length'])
         parts.append('Width: %.1f' % s['width'])
-        parts.append('Gradient: %.1f' % s['gradient'])
+        if s.get('gradient_measured'):
+            parts.append('Gradient: %.1f' % s['gradient'])
         parts.append('Surface: %s' % s['surface'])
         if s['dir']:
             parts.append('Dir: %d' % s['dir'])
@@ -791,6 +796,20 @@ def self_test():
                                     for i in range(len(corners) - 1)),
           '%s' % ''.join('LR'[x['dir'] < 0] for x in corners))
 
+    print('\nelevation')
+    flat = [(la, lo, None) for la, lo, _ in Path().arc(30, 120).straight(200).points()]
+    _, _, segs = build_track(flat, meta={'width': 6.0})
+    check('a source with no elevation says so', not segs[0]['gradient_measured'],
+          'gradient_measured=%s' % segs[0]['gradient_measured'])
+    go = go_track({'id': 'x', 'name': 'X', 'flavour': ''}, segs)
+    check('and the Go it emits carries no gradient at all',
+          'GradientMeasured: false' in go and 'Gradient:' not in go,
+          'ok')
+    withele = Path(ele0=900).arc(30, 120, gradient=-7).straight(200, gradient=-7).points()
+    _, _, segs = build_track(withele, meta={'width': 6.0})
+    check('a source with elevation is measured', segs[0]['gradient_measured'],
+          '%.1f%% on the first corner' % segs[0]['gradient'])
+
     print('\nend to end — a GPX in, Go out')
     import tempfile
     joined = Path(ele0=1000).arc(18, 170, gradient=-9).straight(300, gradient=-6).points()
@@ -862,6 +881,9 @@ def main():
         pts, _, segs = build_track(points, tags, meta)
 
         if args.report:
+            if not segs[0].get('gradient_measured'):
+                print('  ! %s has no elevation — gradients will be borrowed from '
+                      'the authored stand-in' % meta['name'])
             total = sum(s['length'] for s in segs)
             drop = sum(-s['gradient'] / 100 * s['length'] for s in segs if s['gradient'] < 0)
             corners = [s for s in segs if s['radius'] > 0]

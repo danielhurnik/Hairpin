@@ -560,3 +560,61 @@ func TestSurveyedGeometryTakesOver(t *testing.T) {
 		t.Error("merging no surveys changed the authored tracks")
 	}
 }
+
+// An OSM way has coordinates and no elevation, so a road imported from
+// Overpass alone is perfectly flat — and a flat Irohazaka is not a small
+// error, because gradient drives braking distance, the crash model and which
+// setup wins.
+func TestGradientIsBorrowedWhenTheSourceHasNone(t *testing.T) {
+	authored := []TrackDef{{
+		ID: "irohazaka", Name: "Stand-in", Source: SourceAuthored,
+		RealWorld: "Iroha-zaka", Downhill: true, GradientMeasured: true,
+		Segments: []Segment{
+			{Name: "Top", Length: 100, Width: 7, Gradient: -4, Surface: SurfaceSmooth},
+			{Name: "Middle", Length: 100, Width: 7, Gradient: -11, Surface: SurfaceSmooth},
+			{Name: "Bottom", Length: 100, Width: 7, Gradient: -3, Surface: SurfaceSmooth},
+		},
+	}}
+	// Measured corners, no elevation: every gradient reads zero.
+	surveyed := []TrackDef{{
+		ID: "irohazaka", Name: "Iroha-zaka", GradientMeasured: false,
+		Segments: []Segment{
+			{Name: "A", Radius: 18, Length: 60, Width: 7, Surface: SurfaceSmooth, Dir: -1},
+			{Name: "B", Length: 120, Width: 7, Surface: SurfaceSmooth},
+			{Name: "C", Radius: 22, Length: 60, Width: 7, Surface: SurfaceSmooth, Dir: 1},
+			{Name: "D", Length: 60, Width: 7, Surface: SurfaceSmooth},
+		},
+	}}
+
+	got := mergeSurveyed(authored, surveyed)[0]
+	if got.Segments[0].Radius != 18 {
+		t.Fatalf("measured geometry did not survive: R%.0f", got.Segments[0].Radius)
+	}
+
+	var steepest float64
+	for _, seg := range got.Segments {
+		if seg.Gradient == 0 {
+			t.Errorf("%s came through flat — the borrow did not happen", seg.Name)
+		}
+		if seg.Gradient < steepest {
+			steepest = seg.Gradient
+		}
+	}
+	// The profile's character has to survive the remap: the steep middle is
+	// still the steep bit.
+	if steepest != -11 {
+		t.Errorf("steepest borrowed gradient is %.0f%%, want the authored -11%%", steepest)
+	}
+	if d := got.Descent(); d <= 0 {
+		t.Errorf("a borrowed descent still descends nothing: %.1fm", d)
+	}
+
+	// And a source that DID have elevation is left exactly as measured.
+	measured := []TrackDef{{
+		ID: "irohazaka", Name: "Iroha-zaka", GradientMeasured: true,
+		Segments: []Segment{{Name: "A", Radius: 18, Length: 60, Width: 7, Gradient: -8.4, Surface: SurfaceSmooth}},
+	}}
+	if g := mergeSurveyed(authored, measured)[0].Segments[0].Gradient; g != -8.4 {
+		t.Errorf("a measured gradient was overwritten: %.1f", g)
+	}
+}

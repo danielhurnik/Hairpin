@@ -109,8 +109,13 @@ type TrackDef struct {
 	Source   TrackSource `json:"source"`
 	// RealWorld names the road this is standing in for, so a survey can be
 	// recorded against the right piece of tarmac.
-	RealWorld string    `json:"real_world,omitempty"`
-	Segments  []Segment `json:"segments"`
+	RealWorld string `json:"real_world,omitempty"`
+	// GradientMeasured is false when the source had no elevation — an OSM way
+	// carries none — in which case the gradients here were borrowed rather
+	// than measured. Zero is a legitimate gradient, so "flat" and "unknown"
+	// cannot be told apart without saying which this is.
+	GradientMeasured bool      `json:"gradient_measured"`
+	Segments         []Segment `json:"segments"`
 }
 
 // Surveyed reports whether this track's geometry was measured.
@@ -160,6 +165,9 @@ func mergeSurveyed(authored, surveyed []TrackDef) []TrackDef {
 				s.RealWorld = a.RealWorld
 			}
 			s.Downhill = a.Downhill
+			if !s.GradientMeasured {
+				borrowGradient(&s, a)
+			}
 			out = append(out, s)
 			delete(byID, a.ID)
 			continue
@@ -173,6 +181,55 @@ func mergeSurveyed(authored, surveyed []TrackDef) []TrackDef {
 		}
 	}
 	return out
+}
+
+// borrowGradient lays the authored gradient profile over measured geometry.
+//
+// An OSM way has coordinates and no elevation, so a road imported from
+// Overpass alone comes back perfectly flat — and gradient is most of what
+// makes a descent a descent here. It lengthens braking, unloads the rear, and
+// decides which setup wins, so a flat Irohazaka is not a small error.
+//
+// The two tracks will not have the same number of segments, so the profile is
+// mapped by distance along the road: a corner two thirds of the way down the
+// measured track takes the authored gradient from two thirds of the way down
+// the stand-in. Character survives — steep in the middle, easing at the ends —
+// even though the numbers are still someone's judgement rather than a survey.
+func borrowGradient(surveyed *TrackDef, authored TrackDef) {
+	if len(authored.Segments) == 0 || len(surveyed.Segments) == 0 {
+		return
+	}
+	var aTotal float64
+	for _, seg := range authored.Segments {
+		aTotal += seg.Length
+	}
+	var sTotal float64
+	for _, seg := range surveyed.Segments {
+		sTotal += seg.Length
+	}
+	if aTotal <= 0 || sTotal <= 0 {
+		return
+	}
+
+	segs := make([]Segment, len(surveyed.Segments))
+	copy(segs, surveyed.Segments)
+
+	var travelled float64
+	for i := range segs {
+		mid := (travelled + segs[i].Length/2) / sTotal
+		travelled += segs[i].Length
+
+		// The authored segment covering the same fraction of the road.
+		var walk float64
+		for _, a := range authored.Segments {
+			walk += a.Length
+			if walk/aTotal >= mid {
+				segs[i].Gradient = a.Gradient
+				break
+			}
+		}
+	}
+	surveyed.Segments = segs
 }
 
 // authoredTracks are the stand-ins: geometry written to match what each road

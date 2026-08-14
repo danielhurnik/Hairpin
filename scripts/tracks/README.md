@@ -58,5 +58,22 @@ so this can be done one pass at a time.
 | **From OSM tags** | width, surface — when the way carries them |
 | **Still authored** | how blind a corner is, whether a crest unsettles the car, banking, the name in the game |
 
+### A warning about Overpass and elevation
+
+An OSM way has coordinates and **no elevation**, so a road imported from
+Overpass alone comes back perfectly flat. Gradient is most of what makes a
+descent a descent here — it lengthens braking, unloads the rear, and decides
+which setup wins — so a flat Irohazaka is not a small error.
+
+The importer notices and says so, marks the track `gradient_measured: false`,
+and emits no gradients at all. The game then lays the authored gradient profile
+over the measured geometry, mapped by distance along the road, so a corner two
+thirds of the way down takes the gradient from two thirds of the way down the
+stand-in. The corners are real; the slope is still someone's judgement.
+
+A GPX from a phone or a ride-logging site carries elevation and is strictly
+better for this reason. If you only have the OSM way, the import is still worth
+doing — you just do not get the gradients.
+
 A GPS trace cannot tell you that you cannot see the exit of a corner. Those
 stay a judgement, and they are applied on top.
