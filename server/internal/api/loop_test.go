@@ -975,16 +975,16 @@ type setupView struct {
 			Name string `json:"name"`
 		} `json:"track"`
 		Axes []struct {
-			ID       string `json:"id"`
-			Value    int    `json:"value"`
-			Unlocked bool   `json:"unlocked"`
-			Requires string `json:"requires"`
-			Effect   string `json:"effect"`
-			Matters  string `json:"matters"`
+			ID       string  `json:"id"`
+			Value    int     `json:"value"`
+			Setting  float64 `json:"setting"`
+			Display  string  `json:"display"`
+			Unit     string  `json:"unit"`
+			Unlocked bool    `json:"unlocked"`
+			Requires string  `json:"requires"`
 		} `json:"axes"`
 	} `json:"setup"`
-	Rating      float64 `json:"rating"`
-	TrackRating float64 `json:"track_rating"`
+	Rating float64 `json:"rating"`
 }
 
 func (v setupView) axis(t *testing.T, id string) int {
@@ -1080,18 +1080,42 @@ func TestSetupSheetUnlocksWithParts(t *testing.T) {
 		}
 	}
 
-	// Tuning moves the per-track number and leaves the garage number alone.
+	// Tuning sticks, reports itself in real units, and leaves the garage
+	// number alone.
 	before := built
 	var after setupView
 	h.do("POST", "/v1/setup", map[string]any{"axis": "gearing", "value": -2}, &after)
-	if after.Setup.Axes[after.axis(t, "gearing")].Value != -2 {
+	row := after.Setup.Axes[after.axis(t, "gearing")]
+	if row.Value != -2 {
 		t.Error("gearing did not stick")
+	}
+	if row.Display != "3.70" {
+		t.Errorf("final drive at notch -2 displays as %q, want the real ratio 3.70", row.Display)
 	}
 	if diff := after.Rating - before.Rating; diff > 0.05 || diff < -0.05 {
 		t.Errorf("overall rating moved by %.4f on a setup change", diff)
 	}
-	if after.TrackRating == before.TrackRating {
-		t.Error("the per-track rating did not respond to the setup at all")
+}
+
+// The sheet must not hand back a score for the road ahead. A per-track number
+// responds to every adjustment, so publishing it would let the first player to
+// optimise against it solve the pass for everybody.
+func TestSetupDoesNotPredictWhatASheetIsWorth(t *testing.T) {
+	h := newHarness(t, 20)
+	h.buildEverything()
+
+	for _, path := range []string{"/v1/setup", "/v1/race/opponent", "/v1/state"} {
+		var raw map[string]any
+		h.do("GET", path, nil, &raw)
+		body, err := json.Marshal(raw)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", path, err)
+		}
+		for _, leak := range []string{"track_rating", "\"effect\"", "\"matters\""} {
+			if bytes.Contains(body, []byte(leak)) {
+				t.Errorf("%s exposes %s — that is a solver, not a setup sheet", path, leak)
+			}
+		}
 	}
 }
 

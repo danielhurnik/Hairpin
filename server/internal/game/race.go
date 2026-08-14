@@ -74,7 +74,7 @@ func segmentPerf(b Build, seg Segment, progress float64) float64 {
 
 	perf := 100 * (CarWeight*car + DriverWeight*drv)
 	perf *= drivetrainMod(seg.Kind, b.Car.Drivetrain)
-	perf *= setupMod(b, seg.Kind)
+	perf *= setupMod(b, seg, progress)
 	perf *= staminaFactor(b.Driver.Stamina, progress)
 
 	if perf < 1 {

@@ -367,22 +367,25 @@ func (s *Server) resetSetup(w http.ResponseWriter, r *http.Request, p *store.Pla
 	s.setupPayload(w, r, p2)
 }
 
-// setupPayload renders the sheet plus the rating the car carries on the road
-// it is about to be driven on. That per-track number is the one that moves
-// when you tune; the overall rating deliberately does not.
+// setupPayload renders the sheet and the car, and deliberately not a score for
+// the road ahead.
+//
+// The overall rating is safe to show because tuning cannot move it. A
+// per-track figure is a different matter: it responds to every adjustment, so
+// publishing it would turn the sheet into a dial to be optimised against and
+// hand the first player to do it an answer for everybody. What a setup was
+// worth arrives after the race, in the run itself.
 func (s *Server) setupPayload(w http.ResponseWriter, r *http.Request, p *store.Player) {
 	build, _, err := s.store.BuildFor(r.Context(), p)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	view := s.store.SetupFor(r.Context(), p)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"player":       p,
-		"setup":        view,
-		"build":        build,
-		"rating":       game.OverallRating(build),
-		"track_rating": game.TrackRating(build, view.Track),
+		"player": p,
+		"setup":  s.store.SetupFor(r.Context(), p),
+		"build":  build,
+		"rating": game.OverallRating(build),
 	})
 }
 
@@ -514,15 +517,14 @@ func (s *Server) opponent(w http.ResponseWriter, r *http.Request, p *store.Playe
 		return
 	}
 	// You are told the road before you commit to a setup, and it does not
-	// move until you have raced it.
-	track := s.store.NextTrack(p)
+	// move until you have raced it. What you are not told is how well your
+	// current sheet suits it — see setupPayload.
 	writeJSON(w, http.StatusOK, map[string]any{
-		"opponent":     op,
-		"your_rating":  game.OverallRating(build),
-		"track":        track,
-		"track_rating": game.TrackRating(build, track),
-		"free_races":   p.FreeRaces,
-		"extra_cost":   game.ExtraRaceRubies,
+		"opponent":    op,
+		"your_rating": game.OverallRating(build),
+		"track":       s.store.NextTrack(p),
+		"free_races":  p.FreeRaces,
+		"extra_cost":  game.ExtraRaceRubies,
 	})
 }
 

@@ -4,31 +4,32 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strconv"
 
 	"github.com/danielhurnik/hairpin/server/internal/game"
 )
 
 // SetupAxisView is one row of the setup sheet: what it is, whether the car has
-// the part for it, where it is set, and how that suits the road ahead.
+// the part for it, and exactly what it is set to.
 //
-// What it deliberately does not carry is a number. The player is told the
-// shape of each trade and how much this particular pass cares, and is left to
-// work out the rest — a screen that printed coefficients would be a solver,
-// and the setup would stop being a decision.
+// It carries the real number — 85mm, 2.4 bar, 4.30 — and no opinion whatsoever
+// about whether that is the right one. An earlier version scored each axis
+// against the upcoming pass, which is a solver: whoever worked out the best
+// answer once would have worked it out for everybody. Precision belongs in the
+// player's hands; the uncertainty belongs in the outcome. What the setup was
+// worth is something the run tells you afterwards.
 type SetupAxisView struct {
 	game.SetupAxis
-	Value    int  `json:"value"`
-	Min      int  `json:"min"`
-	Max      int  `json:"max"`
-	Unlocked bool `json:"unlocked"`
+	Value int `json:"value"`
+	Min   int `json:"min"`
+	Max   int `json:"max"`
+	// Setting is the real value at the current notch, and Display is it
+	// formatted with its unit.
+	Setting  float64 `json:"setting"`
+	Display  string  `json:"display"`
+	Unlocked bool    `json:"unlocked"`
 	// Locked axes say what to buy, in the language of the car.
 	Requires string `json:"requires,omitempty"`
-	// Effect is how the current setting suits the upcoming track:
-	// strong / slight / neutral / poor / wrong.
-	Effect string `json:"effect"`
-	// Matters is how much this track responds to this axis at all:
-	// high / some / little. An axis that does not matter here is not broken.
-	Matters string `json:"matters"`
 }
 
 // SetupView is the sheet for the car currently being driven, against the track
@@ -70,15 +71,14 @@ func (s *Store) SetupFor(ctx context.Context, p *Player) SetupView {
 			Value:     value,
 			Min:       game.SetupMin,
 			Max:       game.SetupMax,
+			Setting:   a.Setting(value),
+			Display:   display(a, value),
 			Unlocked:  unlocked,
-			Effect:    "neutral",
-			Matters:   matters(game.SetupSpread(a.ID, track, chassis.Drivetrain)),
 		}
 		if !unlocked {
 			row.Requires = fmt.Sprintf("%s — %s tier %d",
 				a.Part, game.UpgradeLabel(a.Category), a.MinTier)
 		} else {
-			row.Effect = game.HintFor(a.ID, value, track, chassis.Drivetrain).Effect
 			view.AnyUnlocked = true
 		}
 		view.Axes = append(view.Axes, row)
@@ -86,22 +86,16 @@ func (s *Store) SetupFor(ctx context.Context, p *Player) SetupView {
 	return view
 }
 
-// matters buckets how much a track responds to an axis. The thresholds are
-// coarse on purpose: "this pass does not care about your gearing" is useful,
-// "0.0071" is not.
-//
-// They are set against what the model actually produces rather than guessed.
-// Across the six tracks the spreads run from about 0.001 to 0.054; a first
-// pass bucketed at 0.055 and duly reported "little" for every axis on every
-// road, which is a screen that tells the player nothing.
-func matters(spread float64) string {
-	switch {
-	case spread >= 0.028:
-		return "high"
-	case spread >= 0.010:
-		return "some"
+// display formats a setting the way it would be written on a setup sheet.
+func display(a game.SetupAxis, notch int) string {
+	v := strconv.FormatFloat(a.Setting(notch), 'f', a.Decimals, 64)
+	if a.Unit == "" {
+		return v
 	}
-	return "little"
+	if a.Unit == "°" {
+		return v + a.Unit
+	}
+	return v + " " + a.Unit
 }
 
 // SetSetup adjusts one axis on the car being driven.

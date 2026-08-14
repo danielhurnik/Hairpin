@@ -7,31 +7,32 @@ import "math"
 //
 // A setup is not an upgrade. Upgrades add performance; a setup MOVES it, from
 // the parts of a road you have decided not to care about onto the parts you
-// have. Every axis is centred (see centredEffects) so that its time-weighted
-// average across all six tracks is exactly neutral: there is no setting that
-// is simply better, and no amount of fiddling raises your overall rating by a
-// single point.
+// have. WithSetup divides every sheet by what it is worth to that particular
+// car on average, so no amount of fiddling raises an overall rating by a
+// point. What tuning buys you is being right about the road in front of you.
 //
-// That property is what makes the feature interesting rather than a second
-// upgrade screen. It also keeps the race calibration honest — the 65% headline
-// is measured on neutral setups, and a tuned car has the same average rating
-// as a stock one, so the curve cannot drift underneath us.
+// Every axis works on the geometry rather than on a corner's label. Ride
+// height is millimetres measured against how far the road actually moves under
+// the car; camber is degrees against how long the tyre is loaded; the final
+// drive is a ratio against how much of the straight is spent near the limiter.
+// That is what makes the numbers worth setting precisely, and it is why they
+// disagree from corner to corner within a single pass.
 //
 // You can only adjust what you have bought the parts for. A stock car has
-// nothing to turn: no coilovers, no adjustable arms, no boost controller. Each
-// upgrade tier hands over another spanner, which gives the upgrade ladder a
-// second payoff beyond raw numbers.
+// nothing to turn: no coilovers, no adjustable arms, no boost controller.
 // ---------------------------------------------------------------------------
 
-// SetupNotch is the range of every axis. Zero is however the car left the
-// workshop.
 const (
 	SetupMin = -2
 	SetupMax = 2
 )
 
-// Setup is one car's adjustment sheet. Values outside [SetupMin, SetupMax] or
-// on an axis the car has no part for are rejected before they ever land here.
+// setupGain scales the whole sheet at once. It is the single knob that sets
+// how much a perfect setup is worth against a factory one — the design target
+// is about 5%, i.e. roughly a ladder rung, which
+// TestPerfectSetupIsWorthAboutFivePercent holds to.
+const setupGain = 2.05
+
 type Setup struct {
 	Gearing  int `json:"gearing"`
 	Boost    int `json:"boost"`
@@ -42,64 +43,83 @@ type Setup struct {
 	Ballast  int `json:"ballast"`
 }
 
-// SetupAxis describes one adjustment: what unlocks it, what it trades, and how
-// to talk about it without printing a spreadsheet at the player.
+// SetupAxis describes one adjustment: what unlocks it, what it is measured in,
+// and what the ends of the range mean. Values holds the real setting at each
+// notch from SetupMin to SetupMax, so the garage shows 85mm rather than "-1".
 type SetupAxis struct {
 	ID       string `json:"id"`
 	Label    string `json:"label"`
 	Category string `json:"category"`
-	// MinTier is the upgrade tier in Category that fits the adjustable part.
-	MinTier int `json:"min_tier"`
-	// Part names the thing you actually bolted on, so the garage can explain
-	// why an axis is locked in the language of the car rather than the schema.
-	Part string `json:"part"`
-	// Low and High are what the ends of the range mean, in the driver's words.
-	Low  string `json:"low"`
-	High string `json:"high"`
-	Note string `json:"note"`
+	MinTier  int    `json:"min_tier"`
+	// Part names the thing you bolted on, so a locked axis can explain itself
+	// in the language of the car rather than of the schema.
+	Part   string     `json:"part"`
+	Unit   string     `json:"unit"`
+	Values [5]float64 `json:"values"`
+	// Decimals is how precisely to print the value.
+	Decimals int    `json:"decimals"`
+	Low      string `json:"low"`
+	High     string `json:"high"`
+	Note     string `json:"note"`
 }
 
 // SetupAxes is the full sheet. Suspension carries three of the seven, because
 // suspension is where setup work actually lives.
+//
+// Values run from SetupMin to SetupMax in order, so index 2 is the factory
+// setting the car left the workshop on.
 var SetupAxes = []SetupAxis{
 	{
 		ID: "gearing", Label: "Final Drive", Category: CatEngine, MinTier: 1,
-		Part: "Intake & Exhaust", Low: "Short", High: "Long",
-		Note: "Short gears fire you out of slow corners and run out of road on a straight.",
+		Part: "Intake & Exhaust", Unit: "", Decimals: 2,
+		Values: [5]float64{3.70, 3.90, 4.10, 4.30, 4.50},
+		Low:    "Long", High: "Short",
+		Note: "Short gears fire you out of slow corners and run out of road on a long straight.",
 	},
 	{
 		ID: "boost", Label: "Boost Pressure", Category: CatTurbo, MinTier: 1,
-		Part: "Bolt-On Snail", Low: "Low", High: "High",
-		Note: "More boost is more everywhere it can reach the ground, and a spikier car everywhere else.",
+		Part: "Bolt-On Snail", Unit: "bar", Decimals: 1,
+		Values: [5]float64{0.4, 0.6, 0.8, 1.0, 1.2},
+		Low:    "Low", High: "High",
+		Note: "More boost is more everywhere it can reach the ground, and a longer wait for it out of a hairpin.",
 	},
 	{
 		ID: "pressure", Label: "Tyre Pressure", Category: CatTires, MinTier: 1,
-		Part: "Sport Touring", Low: "Low", High: "High",
-		Note: "Low pressure buys grip now and gives it back when the tyres are hot.",
+		Part: "Sport Touring", Unit: "bar", Decimals: 1,
+		Values: [5]float64{1.8, 2.0, 2.2, 2.4, 2.6},
+		Low:    "Low", High: "High",
+		Note: "Low pressure buys grip now and hands it back once the tyres are hot.",
 	},
 	{
 		ID: "ballast", Label: "Weight Balance", Category: CatWeight, MinTier: 1,
-		Part: "Stripped Boot", Low: "Rearward", High: "Forward",
-		Note: "Where the mass sits decides whether the car stops or drives. Your layout has opinions.",
+		Part: "Stripped Boot", Unit: "% front", Decimals: 0,
+		Values: [5]float64{50, 52, 54, 56, 58},
+		Low:    "Rearward", High: "Forward",
+		Note: "Mass forward stops and turns in; mass back puts the power down. Your layout has opinions.",
 	},
 	{
 		ID: "ride_height", Label: "Ride Height", Category: CatSuspension, MinTier: 2,
-		Part: "Adjustable Coilovers", Low: "Low", High: "High",
-		Note: "Low is quick where the road is smooth and fast, and hopeless where it is neither.",
+		Part: "Adjustable Coilovers", Unit: "mm", Decimals: 0,
+		Values: [5]float64{130, 115, 100, 85, 70},
+		Low:    "High", High: "Low",
+		Note: "Low is quick where the road is smooth and fast, and grounds out where it is neither.",
 	},
 	{
 		ID: "camber", Label: "Camber", Category: CatSuspension, MinTier: 3,
-		Part: "Pillow-Ball Arms", Low: "Conservative", High: "Aggressive",
-		Note: "Lean the tops of the wheels in for corner grip. The braking zones will notice.",
+		Part: "Pillow-Ball Arms", Unit: "°", Decimals: 1,
+		Values: [5]float64{-0.5, -1.2, -2.0, -2.8, -3.6},
+		Low:    "Conservative", High: "Aggressive",
+		Note: "Lean the wheels in for grip through a long corner. The braking zones will notice.",
 	},
 	{
 		ID: "damping", Label: "Damping", Category: CatSuspension, MinTier: 4,
-		Part: "2-Way Dampers", Low: "Soft", High: "Stiff",
-		Note: "Stiff changes direction the instant you ask. It also finds every bump you hoped to ignore.",
+		Part: "2-Way Dampers", Unit: "clicks", Decimals: 0,
+		Values: [5]float64{2, 5, 8, 11, 14},
+		Low:    "Soft", High: "Stiff",
+		Note: "Stiff changes direction the instant you ask, and finds every bump you hoped to ignore.",
 	},
 }
 
-// Get reads one axis by ID.
 func (s Setup) Get(axis string) (int, bool) {
 	switch axis {
 	case "gearing":
@@ -120,7 +140,6 @@ func (s Setup) Get(axis string) (int, bool) {
 	return 0, false
 }
 
-// With returns a copy with one axis changed.
 func (s Setup) With(axis string, v int) (Setup, bool) {
 	switch axis {
 	case "gearing":
@@ -143,7 +162,6 @@ func (s Setup) With(axis string, v int) (Setup, bool) {
 	return s, true
 }
 
-// AxisByID finds an axis definition.
 func AxisByID(id string) (SetupAxis, bool) {
 	for _, a := range SetupAxes {
 		if a.ID == id {
@@ -153,16 +171,27 @@ func AxisByID(id string) (SetupAxis, bool) {
 	return SetupAxis{}, false
 }
 
+// Setting is the real value at a notch — 85mm, 2.4 bar, 4.30.
+func (a SetupAxis) Setting(notch int) float64 {
+	i := notch - SetupMin
+	if i < 0 {
+		i = 0
+	}
+	if i >= len(a.Values) {
+		i = len(a.Values) - 1
+	}
+	return a.Values[i]
+}
+
 // AxisUnlocked reports whether a car with these tiers has the part fitted.
 func AxisUnlocked(a SetupAxis, tiers UpgradeTiers) bool {
 	tier, ok := tiers.Get(a.Category)
 	return ok && tier >= a.MinTier
 }
 
-// LegalSetup strips any axis the car has no part for. It is applied on the way
-// in and again on the way out, so selling a car's tier down — or any future
-// path that lowers a tier — can never leave a live adjustment behind on a part
-// that is no longer fitted.
+// LegalSetup strips any axis the car has no part for, and pulls anything out
+// of range back into it. Applied on the way in and again on the way out, so a
+// tier that no longer covers an axis cannot leave a live adjustment behind.
 func LegalSetup(s Setup, tiers UpgradeTiers) Setup {
 	out := Setup{}
 	for _, a := range SetupAxes {
@@ -182,190 +211,271 @@ func LegalSetup(s Setup, tiers UpgradeTiers) Setup {
 }
 
 // ---------------------------------------------------------------------------
-// Effects
+// What the road is asking for
+//
+// These read a piece of road and answer one question each, in 0..1. They are
+// what the setup axes actually trade against, and they are why no setting is
+// right twice: a corner that wants camber does not want the same ride height
+// as the crest before it.
 // ---------------------------------------------------------------------------
 
-// rawEffects is the per-notch performance shift by segment kind, before
-// centring. Positive means the high end of the axis helps that kind of road.
-//
-// These are the design surface: they say what the car is like, not what it is
-// worth. What each one is *worth* falls out of the track you are pointed at.
-var rawEffects = map[string]map[SegmentKind]float64{
-	// Long gears trade corner exit for terminal speed.
-	"gearing": {
-		KindStraight: +0.030, KindSweeper: +0.014,
-		KindHairpin: -0.030, KindTechnical: -0.022, KindChicane: -0.018, KindBraking: -0.004,
-	},
-	// Boost is power, and power is worth most where the road is open.
-	"boost": {
-		KindStraight: +0.034, KindSweeper: +0.016, KindBraking: -0.006,
-		KindHairpin: -0.014, KindTechnical: -0.018, KindChicane: -0.016,
-	},
-	// Soft tyres grip and then go off; hard ones roll. Pulled apart across the
-	// corner types rather than being uniformly worse than a straight: centring
-	// deletes anything that is merely a constant, so an axis earns its keep by
-	// disagreeing with itself from one kind of road to the next.
-	"pressure": {
-		KindStraight: +0.034, KindChicane: -0.008, KindHairpin: -0.012,
-		KindTechnical: -0.016, KindBraking: -0.022, KindSweeper: -0.032,
-	},
-	// Forward mass stops and turns in; rearward mass puts the power down.
-	"ballast": {
-		KindBraking: +0.030, KindHairpin: +0.020, KindTechnical: +0.010,
-		KindStraight: -0.024, KindSweeper: -0.018, KindChicane: -0.002,
-	},
-	// A low car is a fast car until the road stops being flat.
-	"ride_height": {
-		KindStraight: +0.018, KindSweeper: +0.026,
-		KindHairpin: -0.020, KindTechnical: -0.026, KindChicane: -0.014, KindBraking: -0.006,
-	},
-	// Camber is corner grip bought with the contact patch under braking — and
-	// it is worth most where the load stays on: a long committed sweeper, not
-	// a second-gear hairpin you are barely leaning on.
-	"camber": {
-		KindSweeper: +0.040, KindTechnical: +0.020, KindChicane: +0.014, KindHairpin: +0.006,
-		KindStraight: -0.024, KindBraking: -0.034,
-	},
-	// Stiff dampers change direction; soft ones survive the surface.
-	"damping": {
-		KindChicane: +0.030, KindTechnical: +0.024, KindHairpin: +0.012,
-		KindSweeper: -0.010, KindStraight: -0.008, KindBraking: -0.014,
-	},
+// loaded is how hard the tyres are working laterally, 0 on a straight.
+func loaded(seg Segment) float64 {
+	return clamp(seg.LateralG/0.95, 0, 1.2)
 }
 
-// kindShare is how much of the racing across every track in the game is spent
-// on each kind of road, weighted by time — and by how quickly the layout
-// covers it.
-//
-// The drivetrain term matters more than it looks. A rating is a
-// performance-weighted average, not a plain one, so centring an axis against
-// flat time alone leaves a residue on any car whose performance is not flat
-// across corner types. An all-wheel-drive car is quicker on straights and
-// slower through hairpins before the setup says anything, and centring that
-// ignored the fact handed every AWD driver the same free tenth. Weighting the
-// share by drivetrainMod removes it at the source.
-var kindShare = computeKindShares()
+// sustained separates a long committed corner from a flick. Camber is worth
+// something in the first and very little in the second.
+func sustained(seg Segment) float64 {
+	return loaded(seg) * clamp(seg.BaseSeconds/5.5, 0.25, 1.2)
+}
 
-func computeKindShares() map[Drivetrain]map[SegmentKind]float64 {
-	out := map[Drivetrain]map[SegmentKind]float64{}
-	for _, dt := range []Drivetrain{FR, FF, MR, AWD} {
-		total := 0.0
-		share := map[SegmentKind]float64{}
-		for _, t := range Tracks {
-			for _, seg := range t.Segments {
-				w := seg.BaseSeconds * drivetrainMod(seg.Kind, dt)
-				share[seg.Kind] += w
-				total += w
-			}
-		}
-		if total > 0 {
-			for k, v := range share {
-				share[k] = v / total
-			}
-		}
-		out[dt] = share
+// openRoad is how much of this segment is spent going fast in a straight line.
+func openRoad(seg Segment) float64 {
+	if seg.Radius > 0 {
+		return 0.15 * clamp((seg.EntrySpeed-30)/25, 0, 1)
 	}
-	return out
+	return clamp((math.Max(seg.EntrySpeed, seg.ExitSpeed)-26)/24, 0, 1)
 }
 
-// centredEffects subtracts each axis's own average, so that every axis is a
-// pure trade: whatever a notch gives you somewhere, it takes back elsewhere in
-// exact proportion to how much of the game's racing happens there.
-//
-// This is the mechanism behind the no-free-lunch guarantee, and it is
-// structural rather than hand-tuned — the numbers above can be edited freely
-// without anyone having to re-balance them back to neutral by hand. Weight
-// balance has its layout sensitivity folded in before centring rather than
-// multiplied on afterwards, so that scaling cannot reintroduce a bias.
-var centredEffects = centreAll()
-
-func centreAll() map[Drivetrain]map[string]map[SegmentKind]float64 {
-	out := map[Drivetrain]map[string]map[SegmentKind]float64{}
-	for dt, share := range kindShare {
-		perAxis := make(map[string]map[SegmentKind]float64, len(rawEffects))
-		for axis, eff := range rawEffects {
-			scale := 1.0
-			if axis == "ballast" {
-				scale = ballastLayout(dt)
-			}
-			mean := 0.0
-			for kind, sh := range share {
-				mean += eff[kind] * scale * sh
-			}
-			centred := make(map[SegmentKind]float64, len(eff))
-			for kind := range share {
-				centred[kind] = eff[kind]*scale - mean
-			}
-			perAxis[axis] = centred
-		}
-		out[dt] = perAxis
+// nearLimiter is how much of a straight is spent at the top of the gearing,
+// which is the only place a long final drive pays.
+func nearLimiter(seg Segment) float64 {
+	if seg.Radius > 0 {
+		return 0
 	}
-	return out
+	return clamp((math.Max(seg.EntrySpeed, seg.ExitSpeed)-36)/18, 0, 1) *
+		clamp(seg.Length/320, 0.3, 1)
 }
 
-// effectsFor is the centred table for a layout, falling back to rear-drive for
-// anything unrecognised rather than silently zeroing every adjustment.
-func effectsFor(dt Drivetrain) map[string]map[SegmentKind]float64 {
-	if e, ok := centredEffects[dt]; ok {
-		return e
+// crawling is how slow the exit is — where short gearing, boost lag and
+// traction all decide themselves.
+func crawling(seg Segment) float64 {
+	if seg.Radius <= 0 {
+		return 0
 	}
-	return centredEffects[FR]
+	return clamp((23-seg.ExitSpeed)/15, 0, 1)
 }
 
-// setupMod is the performance multiplier a setup applies to one kind of road.
-//
-// Layout matters for weight balance and only for weight balance: shifting mass
-// forward in a car that is already nose-heavy is not the same move as doing it
-// in a mid-engined one. It is the one place where the right answer depends on
-// what you are driving rather than where.
-// setupModRaw is the shape of the trade before it is made honest for a
-// particular car. See SetupNorm for why that second step exists.
-func setupModRaw(s Setup, kind SegmentKind, dt Drivetrain) float64 {
+// stopping is how much speed this piece of road takes away, plus what gravity
+// is doing to the brakes.
+func stopping(seg Segment) float64 {
+	var s float64
+	if seg.EntrySpeed > 1 && seg.ExitSpeed < seg.EntrySpeed {
+		s = clamp((seg.EntrySpeed-seg.ExitSpeed)/seg.EntrySpeed/0.42, 0, 1)
+	}
+	return clamp(s+0.45*clamp(-seg.Gradient/10, 0, 1), 0, 1.2)
+}
+
+// transitions is direction-change work: a rhythm section asks the car to move
+// from one side to the other and back without arguing.
+func transitions(seg Segment) float64 {
+	if seg.Rhythm {
+		return 1
+	}
+	if seg.Radius > 0 {
+		return 0.2
+	}
+	return 0
+}
+
+// rough is how much the road moves under the car, normalised against the
+// smoothest surface in the game, with a crest counting for extra.
+func rough(seg Segment) float64 {
+	r := clamp((seg.Surface.bumpAmplitude()-18)/67, 0, 1)
+	if seg.Crest {
+		r = clamp(r+0.35, 0, 1.2)
+	}
+	return r
+}
+
+// heat grows through a run and only where the tyres are being worked.
+func heat(seg Segment, progress float64) float64 {
+	return clamp((progress-0.28)/0.72, 0, 1) * loaded(seg)
+}
+
+// ---------------------------------------------------------------------------
+// The axes, in physical terms
+// ---------------------------------------------------------------------------
+
+// setupModRaw is what a sheet does to one piece of road, before WithSetup
+// divides out whatever it was worth on average to this car.
+func setupModRaw(b Build, seg Segment, progress float64) float64 {
+	s := b.Setup
 	if s == (Setup{}) {
-		return 1 // the overwhelmingly common case, and exactly neutral
+		return 1
 	}
-	e := effectsFor(dt)
 	mod := 1.0
-	mod += float64(s.Gearing) * e["gearing"][kind]
-	mod += float64(s.Boost) * e["boost"][kind]
-	mod += float64(s.Pressure) * e["pressure"][kind]
-	mod += float64(s.Ride) * e["ride_height"][kind]
-	mod += float64(s.Camber) * e["camber"][kind]
-	mod += float64(s.Damping) * e["damping"][kind]
-	mod += float64(s.Ballast) * e["ballast"][kind]
+
+	// Everything below is scaled by what the car actually is, not only by what
+	// the road is. This is the difference between a sheet you can publish and
+	// a sheet you have to work out: a 300hp car does not want the gearing a
+	// 130hp car wants, and a big laggy turbo cares about boost in a way a
+	// small one does not.
+	power := b.Car.PowerToWt / ReferencePowerToWt
+	grip := b.Car.Grip / ReferenceGrip
+	heavy := clamp(b.Car.Weight/1100, 0.75, 1.5)
+
+	// --- Final drive: exit versus terminal speed -------------------------
+	if s.Gearing != 0 {
+		short := float64(s.Gearing) / 2 // +1 shortest, -1 longest
+		// A car with power to spare pulls long gears happily and gains little
+		// from short ones; an underpowered car lives on the short end.
+		pull := clamp(1.45-0.55*power, 0.35, 1.45)
+		reach := clamp(0.55+0.55*power, 0.55, 1.75)
+		mod += setupGain * (0.034*short*crawling(seg)*pull - 0.030*short*nearLimiter(seg)*reach)
+	}
+
+	// --- Boost: power where it lands, lag where it does not ---------------
+	if s.Boost != 0 {
+		bo := float64(s.Boost) / 2
+		// A big single is all boost and all lag; a small bolt-on barely
+		// notices the controller either way.
+		snail := clamp(b.Car.TurboLag/0.012, 0.25, 1.6)
+		mod += setupGain * snail * (0.034*bo*openRoad(seg) - 0.028*bo*crawling(seg))
+	}
+
+	// --- Tyre pressure: grip now against grip later -----------------------
+	if s.Pressure != 0 {
+		soft := -float64(s.Pressure) / 2 // low pressure is the soft end
+		mod += setupGain * (0.030*soft*loaded(seg) - 0.026*soft*openRoad(seg))
+		if soft > 0 {
+			// Heavy cars cook their tyres, and so do cars generating a lot of
+			// grip to begin with.
+			mod -= setupGain * 0.030 * soft * heat(seg, progress) * heavy * clamp(grip, 0.7, 1.5)
+		}
+	}
+
+	// --- Weight balance: stopping against driving out ---------------------
+	//
+	// This is the one axis where the layout changes the answer rather than
+	// just its size. Weight over the driven wheels is traction, so moving mass
+	// forward helps a front-driven car off a slow corner and hurts everything
+	// else — a scale factor could never express that, and while ballast was
+	// only scaled, every layout wanted the identical sheet.
+	if s.Ballast != 0 {
+		fwd := float64(s.Ballast) / 2
+		mod += setupGain * ballastLayout(b.Car.Drivetrain) *
+			(0.032*fwd*stopping(seg) - 0.030*fwd*crawling(seg)*tractionAxle(b.Car.Drivetrain))
+	}
+
+	// --- Ride height: millimetres against how far the road moves ----------
+	if s.Ride != 0 {
+		axis, _ := AxisByID("ride_height")
+		h := axis.Setting(s.Ride)
+		low := (100 - h) / 30 // +1 at 70mm, -1 at 130mm
+		mod += setupGain * 0.030 * low * loaded(seg)
+		// Clearance is the real number: how much room is left once the road
+		// has finished moving. A heavy car uses more travel getting there, so
+		// it runs out sooner than a light one at the same ride height.
+		if clear := h - seg.Surface.bumpAmplitude()*groundingFactor(seg)*heavy; clear < 30 {
+			mod -= setupGain * 0.055 * clamp((30-clear)/30, 0, 1) * rough(seg)
+		}
+	}
+
+	// --- Camber: sustained load against everything longitudinal -----------
+	if s.Camber != 0 {
+		agg := float64(s.Camber) / 2
+		// Diminishing returns: a car already on a lot of grip has less to
+		// find by leaning the wheels over, and more to lose under braking.
+		gain := clamp(1.35-0.4*grip, 0.55, 1.35)
+		mod += setupGain * (0.040*agg*sustained(seg)*gain -
+			0.036*agg*(stopping(seg)*0.6+openRoad(seg)*0.4))
+	}
+
+	// --- Damping: direction change against compliance ---------------------
+	if s.Damping != 0 {
+		stiff := float64(s.Damping) / 2
+		// Stiff dampers work with a car that has the grip to use them and
+		// punish a heavy one that needs the travel.
+		mod += setupGain * (0.034*stiff*transitions(seg)*clamp(grip, 0.7, 1.4) -
+			0.032*stiff*rough(seg)*heavy)
+	}
 
 	// A setup can shade a corner, never transform it.
-	return clamp(mod, 0.86, 1.14)
+	return clamp(mod, 0.82, 1.18)
 }
 
-// setupNormFor is what keeps "a setup cannot make you faster" true for every
-// car rather than only for an average one.
+// groundingFactor scales the bump the car actually has to clear. A crest
+// compresses the suspension on top of whatever the surface is doing.
+func groundingFactor(seg Segment) float64 {
+	f := 1.0
+	if seg.Crest {
+		f += 0.6
+	}
+	// Loading the car in a corner uses travel that is then not available.
+	return f + 0.35*loaded(seg)
+}
+
+// ballastLayout scales weight transfer by where the engine already is.
+func ballastLayout(dt Drivetrain) float64 {
+	switch dt {
+	case FF:
+		return 0.7 // already nose-heavy; there is less to gain
+	case MR:
+		return 1.35 // the most sensitive thing here to move mass in
+	case AWD:
+		return 0.9
+	}
+	return 1.0 // FR
+}
+
+// tractionAxle is how much moving mass forward costs traction out of a slow
+// corner. Negative for front-wheel drive, where the driven wheels are the ones
+// you just put the weight on.
+func tractionAxle(dt Drivetrain) float64 {
+	switch dt {
+	case FF:
+		return -0.8
+	case MR:
+		return 1.3
+	case AWD:
+		return 0.4
+	}
+	return 1.0 // FR
+}
+
+// ---------------------------------------------------------------------------
+// Keeping it a trade
+// ---------------------------------------------------------------------------
+
+// setupNormFor is what keeps "a setup cannot make you faster overall" true for
+// every car rather than only for an average one.
 //
-// Centring the effects makes the modifier average to one across the game's
-// roads. A rating is not that average though — it is weighted by how well the
-// car goes on each kind of road, and a fully built car is nothing like flat.
-// Pour 120hp into an engine and straights start carrying more of your rating
-// than they used to, so a sheet wound towards straights quietly gained about
-// 1.7% overall on a maxed car: a free lunch, and worse, a single obvious
-// answer for every player who found it.
-//
-// Dividing by the build's own performance-weighted average of the modifier
-// removes it exactly, whatever the car. It costs one pass over the six tracks
-// per build, which happens once per race rather than once per corner.
+// The effects above are honest physics and make no attempt to cancel out. A
+// rating is a performance-weighted average over every road in the game, so
+// dividing by the build's own weighted average of the modifier leaves the
+// overall figure exactly where it was and lets the per-track figure move. It
+// costs one pass over the six passes per build, once per race rather than once
+// per corner.
 func setupNormFor(car CarStats, driver DriverStats, s Setup) float64 {
 	if s == (Setup{}) {
 		return 1
 	}
-	bare := Build{Car: car, Driver: driver} // SetupNorm unused: no setup to scale
+	bare := Build{Car: car, Driver: driver}
+	withSetup := Build{Car: car, Driver: driver, Setup: s, SetupNorm: 1}
+
+	// This has to mirror OverallRating exactly to cancel exactly: per-track
+	// weighted means first, then a flat average across the six. Weighting the
+	// whole game by time instead — which a first pass did — quietly favours
+	// whichever setup suits the longer passes, and the passes are no longer
+	// the same length now that their duration comes out of their geometry.
 	var num, den float64
 	for _, t := range Tracks {
 		n := len(t.Segments)
+		var tNum, tDen, tBase float64
 		for i, seg := range t.Segments {
 			progress := float64(i) / math.Max(1, float64(n-1))
 			p := segmentPerf(bare, seg, progress) * seg.BaseSeconds
-			num += p * setupModRaw(s, seg.Kind, car.Drivetrain)
-			den += p
+			tNum += p * setupModRaw(withSetup, seg, progress)
+			tDen += p
+			tBase += seg.BaseSeconds
 		}
+		if tBase == 0 {
+			continue
+		}
+		num += tNum / tBase
+		den += tDen / tBase
 	}
 	if den == 0 || num == 0 {
 		return 1
@@ -374,8 +484,7 @@ func setupNormFor(car CarStats, driver DriverStats, s Setup) float64 {
 }
 
 // WithSetup attaches a sheet to a build and works out the constant that keeps
-// it honest. Every build that races or gets rated goes through here — a build
-// assembled without it would be scored against an uncentred setup.
+// it honest. Every build that races or gets rated goes through here.
 func WithSetup(b Build, s Setup) Build {
 	b.Setup = s
 	b.SetupNorm = setupNormFor(b.Car, b.Driver, s)
@@ -384,149 +493,49 @@ func WithSetup(b Build, s Setup) Build {
 
 // setupMod is the honest modifier: the trade, divided by whatever that trade
 // was worth on average to this particular car.
-func setupMod(b Build, kind SegmentKind) float64 {
-	raw := setupModRaw(b.Setup, kind, b.Car.Drivetrain)
+func setupMod(b Build, seg Segment, progress float64) float64 {
+	raw := setupModRaw(b, seg, progress)
 	if b.SetupNorm <= 0 {
-		// A build assembled by hand rather than through WithSetup. Falling
-		// back to the uncentred value is wrong but bounded; returning zero
-		// would delete the car.
 		return raw
 	}
 	return raw / b.SetupNorm
 }
 
-// ballastLayout scales weight transfer by where the engine already is.
-func ballastLayout(dt Drivetrain) float64 {
-	switch dt {
-	case FF:
-		// Already nose-heavy: adding more forward bias does little good and
-		// taking it out helps more than it would elsewhere.
-		return 0.7
-	case MR:
-		// Mid-engined cars are the most sensitive thing here to move mass in.
-		return 1.35
-	case AWD:
-		return 0.9
-	}
-	return 1.0 // FR
-}
+// ---------------------------------------------------------------------------
+// Risk
+// ---------------------------------------------------------------------------
 
 // SetupVariance is what a setup does to how repeatable the car is. Unlike the
-// performance shift this is deliberately NOT centred: leaning on the car makes
-// it faster on its day and messier on the others.
+// performance side this is deliberately NOT normalised away: leaning on the
+// car makes it faster on its day and messier on the others.
 //
-// It is the part of the sheet that depends on who you are racing rather than
-// where. Behind on the ladder, spikiness is the only thing that beats a better
-// car; ahead of the field, it is how you lose to one.
+// The two knobs are not the same kind of thing, and the difference is what
+// makes aggression a strategy rather than a tax. Spread is symmetric and worth
+// having when you are the slower car; a mistake is time lost and never found.
+// So aggression moves spread hard and mistakes gently.
 type SetupVariance struct {
-	// SigmaMult scales per-corner noise.
-	SigmaMult float64
-	// MistakeMult scales the chance of getting one wrong.
+	SigmaMult   float64
 	MistakeMult float64
 }
 
-// The two knobs here are not the same kind of thing, and the difference is
-// what makes risk a strategy rather than a tax.
-//
-// Spread is symmetric: a wider distribution is worth having when you are the
-// slower car, because the only way past a better build is a run that goes
-// unusually well, and it costs the faster car for exactly the same reason.
-// Mistakes are not symmetric — a lockup is time lost and never time found — so
-// they are pure cost to whoever makes them.
-//
-// A setup that raised both equally would just be slower, and nobody would ever
-// choose it. Aggression therefore moves spread hard and mistakes gently: it
-// genuinely buys upsets, and it genuinely throws away races you were winning.
 func setupVariance(s Setup) SetupVariance {
 	v := SetupVariance{SigmaMult: 1, MistakeMult: 1}
 
-	// Boost: everything arrives at once, or not yet.
 	v.SigmaMult += float64(s.Boost) * 0.100
 	v.MistakeMult += float64(s.Boost) * 0.015
 
-	// Camber: quick, until there is nothing left standing on the tyre.
 	v.SigmaMult += float64(s.Camber) * 0.030
 	v.MistakeMult += float64(s.Camber) * 0.030
 
-	// Stiff dampers give up compliance; soft ones absorb a bad line.
 	v.SigmaMult += float64(s.Damping) * 0.060
 	v.MistakeMult += float64(s.Damping) * 0.010
 
-	// Low pressures are grippier and less predictable as they heat.
 	v.SigmaMult -= float64(s.Pressure) * 0.025
 
+	// A car on the floor has no travel left to absorb a mistake.
+	v.MistakeMult += float64(s.Ride) * 0.020
+
 	v.SigmaMult = clamp(v.SigmaMult, 0.75, 1.45)
-	v.MistakeMult = clamp(v.MistakeMult, 0.80, 1.35)
+	v.MistakeMult = clamp(v.MistakeMult, 0.80, 1.40)
 	return v
-}
-
-// ---------------------------------------------------------------------------
-// Describing a setup without printing the model at the player
-// ---------------------------------------------------------------------------
-
-// SetupHint is a qualitative read on what an axis is doing for a given track —
-// enough to reason with, not enough to solve. The player is told the shape of
-// the trade, never the coefficient.
-type SetupHint struct {
-	AxisID string `json:"axis_id"`
-	Value  int    `json:"value"`
-	// Effect is one of "strong", "slight", "neutral", "poor", "wrong".
-	Effect string `json:"effect"`
-}
-
-// HintFor reads how an axis's current setting suits a track, by asking the
-// model the same question the race will ask it.
-func HintFor(axis string, value int, t TrackDef, dt Drivetrain) SetupHint {
-	hint := SetupHint{AxisID: axis, Value: value, Effect: "neutral"}
-	if value == 0 {
-		return hint
-	}
-	eff, ok := effectsFor(dt)[axis]
-	if !ok {
-		return hint
-	}
-
-	// Time-weighted shift this axis alone produces on this track.
-	var num, den float64
-	for _, seg := range t.Segments {
-		num += eff[seg.Kind] * float64(value) * seg.BaseSeconds
-		den += seg.BaseSeconds
-	}
-	if den == 0 {
-		return hint
-	}
-	switch shift := num / den; {
-	case shift > 0.012:
-		hint.Effect = "strong"
-	case shift > 0.003:
-		hint.Effect = "slight"
-	case shift < -0.012:
-		hint.Effect = "wrong"
-	case shift < -0.003:
-		hint.Effect = "poor"
-	}
-	return hint
-}
-
-// SetupSpread is how far apart the best and worst settings of an axis are on a
-// given track. Near zero means this track does not care what you do here —
-// which is worth knowing, and is not the same as the axis being useless.
-func SetupSpread(axis string, t TrackDef, dt Drivetrain) float64 {
-	eff := effectsFor(dt)[axis]
-	best := math.Inf(-1)
-	worst := math.Inf(1)
-	for v := SetupMin; v <= SetupMax; v++ {
-		h := 0.0
-		var den float64
-		for _, seg := range t.Segments {
-			h += eff[seg.Kind] * float64(v) * seg.BaseSeconds
-			den += seg.BaseSeconds
-		}
-		if den > 0 {
-			h /= den
-		}
-		best = math.Max(best, h)
-		worst = math.Min(worst, h)
-	}
-	return best - worst
 }

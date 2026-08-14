@@ -175,8 +175,14 @@ func TestSetupViewExplainsWhatIsLocked(t *testing.T) {
 		if !a.Unlocked {
 			t.Errorf("axis %q still locked on a fully built car", a.ID)
 		}
-		if a.Matters == "" || a.Effect == "" {
-			t.Errorf("axis %q gives the player nothing to reason about: %+v", a.ID, a)
+		// The sheet states the setting and takes no view on whether it is the
+		// right one. A number, a unit, and no score.
+		if a.Display == "" {
+			t.Errorf("axis %q does not say what it is set to", a.ID)
+		}
+		if a.Setting != a.SetupAxis.Setting(a.Value) {
+			t.Errorf("axis %q reports %v but its notch %d is %v",
+				a.ID, a.Setting, a.Value, a.SetupAxis.Setting(a.Value))
 		}
 	}
 }

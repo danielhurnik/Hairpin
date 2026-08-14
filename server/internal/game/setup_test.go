@@ -73,10 +73,11 @@ func TestSetupMattersOnASpecificTrack(t *testing.T) {
 		t.Fatal("happogahara missing")
 	}
 
+	// +2 is the short end of the final drive (4.50), -2 the long one (3.70).
 	short := referenceBuild()
-	short = WithSetup(short, Setup{Gearing: -2})
+	short = WithSetup(short, Setup{Gearing: 2})
 	long := referenceBuild()
-	long = WithSetup(long, Setup{Gearing: 2})
+	long = WithSetup(long, Setup{Gearing: -2})
 
 	// Short gears on the hairpins, long gears on the fast one.
 	if a, b := TrackRating(short, akina), TrackRating(long, akina); a <= b {
@@ -262,5 +263,128 @@ func TestNextTrackReachesEveryTrack(t *testing.T) {
 	}
 	if len(seen) != len(Tracks) {
 		t.Errorf("saw %d of %d tracks over 4000 races", len(seen), len(Tracks))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// What a setup is worth
+// ---------------------------------------------------------------------------
+
+// bestSetupFor hill-climbs the sheet for a track, one axis at a time, which is
+// what a determined player does by hand. Coordinate ascent rather than the
+// full 5^7 cross product: it lands on the same answer for a model this smooth
+// and is fast enough to run in a test.
+func bestSetupFor(b Build, t TrackDef) Setup {
+	best := Setup{}
+	bestScore := TrackRating(WithSetup(b, best), t)
+	for pass := 0; pass < 4; pass++ {
+		improved := false
+		for _, a := range SetupAxes {
+			for v := SetupMin; v <= SetupMax; v++ {
+				cand, _ := best.With(a.ID, v)
+				if s := TrackRating(WithSetup(b, cand), t); s > bestScore+1e-9 {
+					best, bestScore = cand, s
+					improved = true
+				}
+			}
+		}
+		if !improved {
+			break
+		}
+	}
+	return best
+}
+
+// The headline number for the whole feature: getting the car right for the
+// road should be worth about a ladder rung, and no more. Too little and the
+// spanner is decoration; too much and the garage stops mattering.
+func TestPerfectSetupIsWorthAboutFivePercent(t *testing.T) {
+	base := referenceBuild()
+	var sum float64
+	for _, track := range Tracks {
+		factory := TrackRating(WithSetup(base, Setup{}), track)
+		tuned := TrackRating(WithSetup(base, bestSetupFor(base, track)), track)
+		gain := tuned/factory - 1
+		sum += gain
+		t.Logf("%-28s perfect setup worth %+.2f%%", track.Name, gain*100)
+		if gain < 0.02 {
+			t.Errorf("%s: a perfect setup is worth only %+.2f%% — not worth the screen", track.Name, gain*100)
+		}
+		if gain > 0.09 {
+			t.Errorf("%s: a perfect setup is worth %+.2f%% — the sheet outweighs the build", track.Name, gain*100)
+		}
+	}
+	if avg := sum / float64(len(Tracks)); avg < 0.035 || avg > 0.065 {
+		t.Errorf("a perfect setup averages %+.2f%% across the game, want about 5%%", avg*100)
+	} else {
+		t.Logf("average across the game: %+.2f%%", avg*100)
+	}
+}
+
+// A sheet built for one pass has to be actively wrong on another, or players
+// would set the car up once and never touch it again.
+func TestASetupForOnePassIsWrongOnAnother(t *testing.T) {
+	base := referenceBuild()
+	worseSomewhere := 0
+	for _, home := range Tracks {
+		sheet := bestSetupFor(base, home)
+		var carriedMean float64
+		n := 0
+		for _, away := range Tracks {
+			if away.ID == home.ID {
+				continue
+			}
+			factory := TrackRating(WithSetup(base, Setup{}), away)
+			carried := TrackRating(WithSetup(base, sheet), away)
+			carriedMean += carried/factory - 1
+			n++
+			if carried < factory {
+				worseSomewhere++
+			}
+		}
+		// Carrying a sheet to the wrong pass has to cost on average. This is
+		// the property that stops a player setting the car up once in their
+		// career and never opening the screen again.
+		if carriedMean/float64(n) >= 0 {
+			t.Errorf("the %s sheet averages %+.2f%% on foreign passes — it travels for free",
+				home.Name, carriedMean/float64(n)*100)
+		}
+	}
+	total := len(Tracks) * (len(Tracks) - 1)
+	if worseSomewhere < total/2 {
+		t.Errorf("a track-specific sheet is worse than factory on only %d of %d other passes",
+			worseSomewhere, total)
+	}
+	t.Logf("track-specific sheets are worse than factory on %d of %d foreign passes", worseSomewhere, total)
+}
+
+// And the optimum has to depend on the car, not just the road — otherwise one
+// published sheet per pass serves the entire playerbase.
+func TestTheBestSetupDependsOnTheCar(t *testing.T) {
+	track, _ := TrackByID("akagi_down")
+
+	layouts := []Drivetrain{FR, FF, MR, AWD}
+	sheets := map[Drivetrain]Setup{}
+	for _, dt := range layouts {
+		b := referenceBuild()
+		b.Car.Drivetrain = dt
+		sheets[dt] = bestSetupFor(b, track)
+	}
+	distinct := map[Setup]bool{}
+	for _, s := range sheets {
+		distinct[s] = true
+	}
+	if len(distinct) < 2 {
+		t.Errorf("every layout wants the identical sheet on %s: %+v", track.Name, sheets[FR])
+	}
+
+	// A powerful car and a nimble one should also disagree.
+	powerful := referenceBuild()
+	powerful.Car.PowerToWt *= 1.6
+	nimble := referenceBuild()
+	nimble.Car.Grip *= 1.4
+	nimble.Car.Handling *= 1.3
+	if bestSetupFor(powerful, track) == bestSetupFor(nimble, track) {
+		t.Error("a power car and a grip car want the identical sheet")
 	}
 }

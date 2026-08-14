@@ -1,6 +1,8 @@
 package game
 
-// SegmentKind determines which stats matter through a piece of road.
+// SegmentKind determines which stats matter through a piece of road. It is no
+// longer authored — deriveKind works it out from the corner's radius and what
+// leads into it — but the attribute weights below still hang off it.
 type SegmentKind string
 
 const (
@@ -78,21 +80,12 @@ func drivetrainMod(kind SegmentKind, dt Drivetrain) float64 {
 	case FR:
 		switch kind {
 		case KindHairpin:
-			return 1.025
+			return 1.02
 		case KindStraight:
 			return 0.995
 		}
 	}
 	return 1.0
-}
-
-type Segment struct {
-	Name string      `json:"name"`
-	Kind SegmentKind `json:"kind"`
-	// BaseSeconds is how long a reference build (rating 100) takes.
-	BaseSeconds float64 `json:"base_seconds"`
-	// Risk 0..1 scales both random noise and mistake probability.
-	Risk float64 `json:"risk"`
 }
 
 type TrackDef struct {
@@ -111,108 +104,125 @@ func (t TrackDef) BaseSeconds() float64 {
 	return s
 }
 
-var Tracks = []TrackDef{
+// Tracks are authored as geometry: radius, length, width, camber, gradient and
+// surface. Duration, risk and corner type are all derived from that at
+// start-up by deriveTrack — nothing below says how long a corner takes or how
+// dangerous it is, because those are consequences rather than choices.
+//
+// The passes are approximations of the real roads' character rather than
+// surveys of them. Each one is authored to disagree with itself: a setup that
+// suits the hairpins is wrong for the fast section, so there is a compromise
+// to find rather than an answer to look up.
+// The derivation is wrapped around the literal rather than run from init()
+// on purpose: the centred setup tables are package-level vars computed from
+// these durations, and Go initialises vars by dependency but runs init()
+// afterwards. Deriving here means anything reading Tracks reads finished ones.
+var Tracks = deriveAll([]TrackDef{
 	{
 		ID: "akina_down", Name: "Mt. Akina — Downhill", Downhill: true,
 		Flavour: "Five consecutive hairpins. The gutter is a line, if you're mad enough.",
 		Segments: []Segment{
-			{Name: "Start Line Chute", Kind: KindStraight, BaseSeconds: 7.5, Risk: 0.10},
-			{Name: "First Right", Kind: KindSweeper, BaseSeconds: 5.5, Risk: 0.30},
-			{Name: "Consecutive Hairpin 1", Kind: KindHairpin, BaseSeconds: 6.2, Risk: 0.55},
-			{Name: "Consecutive Hairpin 2", Kind: KindHairpin, BaseSeconds: 6.0, Risk: 0.55},
-			{Name: "Consecutive Hairpin 3", Kind: KindHairpin, BaseSeconds: 6.1, Risk: 0.60},
-			{Name: "Consecutive Hairpin 4", Kind: KindHairpin, BaseSeconds: 6.0, Risk: 0.60},
-			{Name: "Consecutive Hairpin 5", Kind: KindHairpin, BaseSeconds: 6.3, Risk: 0.65},
-			{Name: "Downhill Straight", Kind: KindStraight, BaseSeconds: 9.0, Risk: 0.12},
-			{Name: "Blind Left", Kind: KindTechnical, BaseSeconds: 5.8, Risk: 0.45},
-			{Name: "The Gutter Corner", Kind: KindTechnical, BaseSeconds: 5.4, Risk: 0.75},
-			{Name: "Final Braking Zone", Kind: KindBraking, BaseSeconds: 5.0, Risk: 0.50},
-			{Name: "Run to the Line", Kind: KindStraight, BaseSeconds: 8.2, Risk: 0.10},
+			{Name: "Start Line Chute", Length: 260, Width: 7.0, Gradient: -6, Surface: SurfaceSmooth},
+			{Name: "First Right", Radius: 95, Length: 120, Width: 6.8, Banking: 2.0, Gradient: -6, Surface: SurfaceSmooth, Dir: 1},
+			{Name: "Consecutive Hairpin 1", Radius: 16, Length: 62, Width: 6.2, Banking: -1.0, Gradient: -9, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Consecutive Hairpin 2", Radius: 15, Length: 58, Width: 6.0, Banking: -1.5, Gradient: -9, Surface: SurfaceCoarse, Dir: 1},
+			{Name: "Consecutive Hairpin 3", Radius: 14, Length: 56, Width: 5.8, Banking: -2.0, Gradient: -10, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Consecutive Hairpin 4", Radius: 15, Length: 58, Width: 5.8, Banking: -1.5, Gradient: -10, Surface: SurfacePatched, Dir: 1},
+			{Name: "Consecutive Hairpin 5", Radius: 13, Length: 54, Width: 5.6, Banking: -2.5, Gradient: -10, Surface: SurfacePatched, Dir: -1},
+			{Name: "Downhill Straight", Length: 340, Width: 7.2, Gradient: -8, Surface: SurfaceSmooth, Crest: true},
+			{Name: "Blind Left", Radius: 44, Length: 95, Width: 6.4, Banking: -1.0, Gradient: -7, Surface: SurfaceSmooth, Blind: true, Dir: -1},
+			{Name: "The Gutter Corner", Radius: 22, Length: 70, Width: 5.4, Banking: -3.5, Gradient: -8, Surface: SurfaceBroken, Blind: true, Dir: 1},
+			{Name: "Final Braking Zone", Radius: 34, Length: 80, Width: 6.6, Banking: 1.0, Gradient: -5, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Run to the Line", Length: 300, Width: 7.4, Gradient: -3, Surface: SurfaceSmooth},
 		},
 	},
 	{
 		ID: "myogi_up", Name: "Myogi — Uphill",
 		Flavour: "Short, tight, and the crowd stands close enough to touch the mirrors.",
 		Segments: []Segment{
-			{Name: "Launch", Kind: KindStraight, BaseSeconds: 6.0, Risk: 0.15},
-			{Name: "Tight Right", Kind: KindHairpin, BaseSeconds: 5.4, Risk: 0.45},
-			{Name: "Uphill Esses", Kind: KindTechnical, BaseSeconds: 7.2, Risk: 0.40},
-			{Name: "Short Chute", Kind: KindStraight, BaseSeconds: 5.0, Risk: 0.10},
-			{Name: "Bumpy Chicane", Kind: KindChicane, BaseSeconds: 4.6, Risk: 0.55},
-			{Name: "Second Hairpin", Kind: KindHairpin, BaseSeconds: 5.6, Risk: 0.48},
-			{Name: "Long Left Sweeper", Kind: KindSweeper, BaseSeconds: 6.4, Risk: 0.35},
-			{Name: "Crest Braking", Kind: KindBraking, BaseSeconds: 4.4, Risk: 0.52},
-			{Name: "Final Esses", Kind: KindTechnical, BaseSeconds: 6.0, Risk: 0.42},
-			{Name: "Sprint to the Line", Kind: KindStraight, BaseSeconds: 7.0, Risk: 0.12},
+			{Name: "Launch", Length: 200, Width: 6.6, Gradient: 5, Surface: SurfaceCoarse},
+			{Name: "Tight Right", Radius: 19, Length: 60, Width: 5.8, Banking: 1.0, Gradient: 7, Surface: SurfaceCoarse, Dir: 1},
+			{Name: "Uphill Esses", Radius: 48, Length: 150, Width: 5.6, Banking: -1.0, Gradient: 8, Surface: SurfacePatched, Dir: -1},
+			{Name: "Short Chute", Length: 145, Width: 6.0, Gradient: 6, Surface: SurfacePatched},
+			{Name: "Bumpy Chicane", Radius: 30, Length: 74, Width: 5.4, Banking: -2.0, Gradient: 5, Surface: SurfaceBroken, Dir: 1},
+			{Name: "Second Hairpin", Radius: 17, Length: 58, Width: 5.6, Banking: 0.5, Gradient: 8, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Long Left Sweeper", Radius: 88, Length: 170, Width: 6.4, Banking: 2.5, Gradient: 4, Surface: SurfaceSmooth, Dir: -1},
+			{Name: "Crest Braking", Radius: 40, Length: 78, Width: 6.0, Banking: -0.5, Gradient: 2, Surface: SurfaceCoarse, Crest: true, Blind: true, Dir: 1},
+			{Name: "Final Esses", Radius: 42, Length: 140, Width: 5.8, Banking: -1.0, Gradient: 6, Surface: SurfacePatched, Dir: -1},
+			{Name: "Sprint to the Line", Length: 230, Width: 6.8, Gradient: 3, Surface: SurfaceSmooth},
 		},
 	},
 	{
 		ID: "irohazaka", Name: "Irohazaka — One Way Down", Downhill: true,
 		Flavour: "Forty-eight corners, all numbered, all going the same direction. Down.",
 		Segments: []Segment{
-			{Name: "Gate Straight", Kind: KindStraight, BaseSeconds: 6.8, Risk: 0.10},
-			{Name: "Corner 1 — Ha", Kind: KindHairpin, BaseSeconds: 5.8, Risk: 0.50},
-			{Name: "Corner 2 — Ni", Kind: KindHairpin, BaseSeconds: 5.6, Risk: 0.52},
-			{Name: "Double Apex", Kind: KindTechnical, BaseSeconds: 6.6, Risk: 0.48},
-			{Name: "Camber Change", Kind: KindChicane, BaseSeconds: 5.0, Risk: 0.60},
-			{Name: "Long Descent", Kind: KindStraight, BaseSeconds: 8.4, Risk: 0.14},
-			{Name: "Brake Fade Zone", Kind: KindBraking, BaseSeconds: 5.6, Risk: 0.68},
-			{Name: "Tightening Right", Kind: KindHairpin, BaseSeconds: 5.9, Risk: 0.58},
-			{Name: "Blind Crest", Kind: KindSweeper, BaseSeconds: 6.2, Risk: 0.62},
-			{Name: "Last Hairpin", Kind: KindHairpin, BaseSeconds: 5.7, Risk: 0.55},
-			{Name: "Exit Road", Kind: KindStraight, BaseSeconds: 7.6, Risk: 0.10},
+			{Name: "Gate Straight", Length: 240, Width: 7.6, Gradient: -5, Surface: SurfaceSmooth},
+			{Name: "Corner 1 — Ha", Radius: 18, Length: 64, Width: 7.2, Banking: 1.5, Gradient: -8, Surface: SurfaceSmooth, Dir: -1},
+			{Name: "Corner 2 — Ni", Radius: 17, Length: 62, Width: 7.0, Banking: 1.0, Gradient: -9, Surface: SurfaceSmooth, Dir: -1},
+			{Name: "Double Apex", Radius: 52, Length: 155, Width: 7.0, Banking: 0.5, Gradient: -8, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Camber Change", Radius: 36, Length: 90, Width: 6.6, Banking: -3.0, Gradient: -9, Surface: SurfacePatched, Dir: 1},
+			{Name: "Long Descent", Length: 380, Width: 7.4, Gradient: -10, Surface: SurfaceSmooth},
+			{Name: "Brake Fade Zone", Radius: 26, Length: 82, Width: 6.8, Banking: -1.0, Gradient: -11, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Tightening Right", Radius: 15, Length: 60, Width: 6.6, Banking: 0.5, Gradient: -9, Surface: SurfaceCoarse, Blind: true, Dir: 1},
+			{Name: "Blind Crest", Radius: 78, Length: 140, Width: 7.0, Banking: 1.0, Gradient: -6, Surface: SurfaceSmooth, Crest: true, Blind: true, Dir: -1},
+			{Name: "Last Hairpin", Radius: 16, Length: 60, Width: 6.8, Banking: 1.5, Gradient: -8, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Exit Road", Length: 280, Width: 7.8, Gradient: -4, Surface: SurfaceSmooth},
 		},
 	},
 	{
 		ID: "happogahara", Name: "Happogahara — High Speed",
 		Flavour: "Wide, fast, and it rewards the brave over the clever.",
 		Segments: []Segment{
-			{Name: "Rolling Start", Kind: KindStraight, BaseSeconds: 9.5, Risk: 0.10},
-			{Name: "Flat-Out Kink", Kind: KindSweeper, BaseSeconds: 6.8, Risk: 0.45},
-			{Name: "Big Braking", Kind: KindBraking, BaseSeconds: 5.2, Risk: 0.42},
-			{Name: "Fast Left", Kind: KindSweeper, BaseSeconds: 7.0, Risk: 0.40},
-			{Name: "Back Straight", Kind: KindStraight, BaseSeconds: 10.5, Risk: 0.08},
-			{Name: "Late Braking Duel", Kind: KindBraking, BaseSeconds: 5.4, Risk: 0.58},
-			{Name: "Sweeping Right", Kind: KindSweeper, BaseSeconds: 7.2, Risk: 0.38},
-			{Name: "Technical Section", Kind: KindTechnical, BaseSeconds: 6.4, Risk: 0.40},
-			{Name: "Final Kink", Kind: KindSweeper, BaseSeconds: 6.0, Risk: 0.35},
-			{Name: "Drag to the Line", Kind: KindStraight, BaseSeconds: 9.8, Risk: 0.08},
+			{Name: "Rolling Start", Length: 460, Width: 13.0, Gradient: 0, Surface: SurfaceSmooth},
+			{Name: "Flat-Out Kink", Radius: 240, Length: 180, Width: 12.5, Banking: 3.0, Gradient: 0, Surface: SurfaceSmooth, Dir: 1},
+			{Name: "Big Braking", Radius: 55, Length: 110, Width: 12.0, Banking: 1.5, Gradient: -1, Surface: SurfaceSmooth, Dir: -1},
+			{Name: "Fast Left", Radius: 165, Length: 200, Width: 12.0, Banking: 2.5, Gradient: 1, Surface: SurfaceSmooth, Dir: -1},
+			{Name: "Back Straight", Length: 540, Width: 13.5, Gradient: 0, Surface: SurfaceSmooth},
+			// The infield is what stops this place being a single long
+			// answer. Wide and fast everywhere else, it drops to a second-gear
+			// corner on broken concrete, so the low, stiff, long-geared car
+			// that owns the straights has to give something back here.
+			{Name: "Late Braking Duel", Radius: 21, Length: 95, Width: 10.5, Banking: -1.0, Gradient: 0, Surface: SurfaceBroken, Dir: 1},
+			{Name: "Sweeping Right", Radius: 185, Length: 210, Width: 12.5, Banking: 3.5, Gradient: 0, Surface: SurfaceSmooth, Dir: 1},
+			{Name: "Technical Section", Radius: 34, Length: 165, Width: 9.0, Banking: -2.0, Gradient: 1, Surface: SurfacePatched, Crest: true, Dir: -1},
+			{Name: "Final Kink", Radius: 210, Length: 175, Width: 12.5, Banking: 2.0, Gradient: 0, Surface: SurfaceSmooth, Dir: 1},
+			{Name: "Drag to the Line", Length: 500, Width: 13.0, Gradient: 0, Surface: SurfaceSmooth},
 		},
 	},
 	{
 		ID: "akagi_down", Name: "Mt. Akagi — Downhill", Downhill: true,
 		Flavour: "Rhythm section after rhythm section. Break the rhythm, lose the race.",
 		Segments: []Segment{
-			{Name: "Summit Start", Kind: KindStraight, BaseSeconds: 7.0, Risk: 0.10},
-			{Name: "Opening Sweeper", Kind: KindSweeper, BaseSeconds: 6.0, Risk: 0.32},
-			{Name: "Rhythm Esses 1", Kind: KindTechnical, BaseSeconds: 6.5, Risk: 0.44},
-			{Name: "Rhythm Esses 2", Kind: KindTechnical, BaseSeconds: 6.3, Risk: 0.46},
-			{Name: "Downhill Chicane", Kind: KindChicane, BaseSeconds: 4.8, Risk: 0.58},
-			{Name: "Guardrail Hairpin", Kind: KindHairpin, BaseSeconds: 5.9, Risk: 0.62},
-			{Name: "Middle Straight", Kind: KindStraight, BaseSeconds: 8.6, Risk: 0.12},
-			{Name: "Off-Camber Left", Kind: KindTechnical, BaseSeconds: 5.7, Risk: 0.66},
-			{Name: "Heavy Braking", Kind: KindBraking, BaseSeconds: 5.1, Risk: 0.50},
-			{Name: "Final Hairpin", Kind: KindHairpin, BaseSeconds: 6.0, Risk: 0.54},
-			{Name: "Run Out", Kind: KindStraight, BaseSeconds: 8.0, Risk: 0.10},
+			{Name: "Summit Start", Length: 250, Width: 7.4, Gradient: -5, Surface: SurfaceSmooth},
+			{Name: "Opening Sweeper", Radius: 105, Length: 145, Width: 7.2, Banking: 2.0, Gradient: -6, Surface: SurfaceSmooth, Dir: 1},
+			{Name: "Rhythm Esses 1", Radius: 58, Length: 150, Width: 6.8, Banking: 0.5, Gradient: -7, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Rhythm Esses 2", Radius: 54, Length: 145, Width: 6.8, Banking: 0.5, Gradient: -7, Surface: SurfaceCoarse, Dir: 1},
+			{Name: "Downhill Chicane", Radius: 33, Length: 84, Width: 6.4, Banking: -1.5, Gradient: -8, Surface: SurfacePatched, Dir: -1},
+			{Name: "Guardrail Hairpin", Radius: 17, Length: 62, Width: 6.0, Banking: -2.0, Gradient: -9, Surface: SurfaceCoarse, Dir: 1},
+			{Name: "Middle Straight", Length: 350, Width: 7.2, Gradient: -7, Surface: SurfaceSmooth},
+			{Name: "Off-Camber Left", Radius: 40, Length: 100, Width: 6.2, Banking: -4.5, Gradient: -8, Surface: SurfaceBroken, Blind: true, Dir: -1},
+			{Name: "Heavy Braking", Radius: 30, Length: 82, Width: 6.6, Banking: 1.0, Gradient: -6, Surface: SurfaceCoarse, Dir: 1},
+			{Name: "Final Hairpin", Radius: 16, Length: 60, Width: 6.2, Banking: 0.0, Gradient: -7, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Run Out", Length: 300, Width: 7.4, Gradient: -4, Surface: SurfaceSmooth},
 		},
 	},
 	{
 		ID: "usui", Name: "Usui Pass — Downhill", Downhill: true,
 		Flavour: "Narrow, damp, and lined with a hundred and eighty corners of history.",
 		Segments: []Segment{
-			{Name: "Cold Start", Kind: KindStraight, BaseSeconds: 6.4, Risk: 0.12},
-			{Name: "Damp Right", Kind: KindSweeper, BaseSeconds: 5.8, Risk: 0.50},
-			{Name: "Narrow Esses", Kind: KindTechnical, BaseSeconds: 6.8, Risk: 0.52},
-			{Name: "Stone Wall Hairpin", Kind: KindHairpin, BaseSeconds: 6.1, Risk: 0.70},
-			{Name: "Short Straight", Kind: KindStraight, BaseSeconds: 6.6, Risk: 0.12},
-			{Name: "Double Chicane", Kind: KindChicane, BaseSeconds: 5.2, Risk: 0.60},
-			{Name: "Mossy Braking Zone", Kind: KindBraking, BaseSeconds: 5.0, Risk: 0.64},
-			{Name: "Tunnel Sweeper", Kind: KindSweeper, BaseSeconds: 6.2, Risk: 0.44},
-			{Name: "Last Esses", Kind: KindTechnical, BaseSeconds: 6.4, Risk: 0.48},
-			{Name: "Bridge Straight", Kind: KindStraight, BaseSeconds: 7.4, Risk: 0.10},
+			{Name: "Cold Start", Length: 210, Width: 5.8, Gradient: -4, Surface: SurfacePatched},
+			{Name: "Damp Right", Radius: 62, Length: 120, Width: 5.4, Banking: -1.0, Gradient: -6, Surface: SurfacePatched, Dir: 1},
+			{Name: "Narrow Esses", Radius: 38, Length: 150, Width: 5.0, Banking: -1.5, Gradient: -7, Surface: SurfaceBroken, Dir: -1},
+			{Name: "Stone Wall Hairpin", Radius: 14, Length: 56, Width: 4.6, Banking: -2.5, Gradient: -8, Surface: SurfaceBroken, Blind: true, Dir: 1},
+			{Name: "Short Straight", Length: 190, Width: 5.6, Gradient: -5, Surface: SurfacePatched},
+			{Name: "Double Chicane", Radius: 29, Length: 88, Width: 5.0, Banking: -2.0, Gradient: -6, Surface: SurfaceBroken, Dir: -1},
+			{Name: "Mossy Braking Zone", Radius: 25, Length: 76, Width: 4.8, Banking: -3.0, Gradient: -7, Surface: SurfaceBroken, Blind: true, Dir: 1},
+			{Name: "Tunnel Sweeper", Radius: 84, Length: 145, Width: 5.6, Banking: 1.5, Gradient: -4, Surface: SurfaceSmooth, Dir: -1},
+			{Name: "Last Esses", Radius: 44, Length: 140, Width: 5.2, Banking: -1.0, Gradient: -5, Surface: SurfacePatched, Dir: 1},
+			{Name: "Bridge Straight", Length: 240, Width: 6.0, Gradient: -2, Surface: SurfaceSmooth},
 		},
 	},
-}
+})
 
 func TrackByID(id string) (TrackDef, bool) {
 	for _, t := range Tracks {
