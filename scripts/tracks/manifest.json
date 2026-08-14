@@ -1,0 +1,34 @@
+{
+  "_comment": [
+    "One entry per pass. `source` is a file in this directory: a .gpx recorded",
+    "on the road, or a .json response from the Overpass API for its OSM way.",
+    "",
+    "Only tracks whose source file exists need to be listed — anything absent",
+    "keeps its authored stand-in, so this can be filled in one road at a time.",
+    "",
+    "width and surface are optional overrides. Leave them out and OSM tags are",
+    "used when present, falling back to a 6m mountain road on coarse asphalt.",
+    "segment_names is optional and positional; unnamed corners are named after",
+    "what they turned out to be."
+  ],
+  "tracks": [
+    {
+      "id": "akina_down",
+      "name": "Mt. Akina — Downhill",
+      "source": "akina_down.gpx",
+      "downhill": true,
+      "flavour": "Five consecutive hairpins. The gutter is a line, if you're mad enough.",
+      "real_world": "Mt. Haruna, Gunma — the east-face descent from Lake Haruna towards Takasaki.",
+      "width": 6.2
+    },
+    {
+      "id": "irohazaka",
+      "name": "Irohazaka — One Way Down",
+      "source": "irohazaka.gpx",
+      "downhill": true,
+      "flavour": "Forty-eight corners, all numbered, all going the same direction. Down.",
+      "real_world": "Iroha-zaka, Nikko, Tochigi — the descending one-way road.",
+      "width": 7.0
+    }
+  ]
+}

@@ -485,3 +485,78 @@ func TestTheWetWantsADifferentSheet(t *testing.T) {
 	t.Logf("dry %+v", dry)
 	t.Logf("wet %+v", wet)
 }
+
+// ---------------------------------------------------------------------------
+// Provenance
+// ---------------------------------------------------------------------------
+
+// Every pass has to say where its geometry came from. "Authored" and
+// "surveyed" are different claims and the difference should be legible from
+// the data rather than from a comment somebody might not read.
+func TestEveryTrackDeclaresItsSource(t *testing.T) {
+	for _, tr := range Tracks {
+		switch tr.Source {
+		case SourceAuthored, SourceSurveyed:
+		default:
+			t.Errorf("%s has source %q, want authored or surveyed", tr.ID, tr.Source)
+		}
+		if tr.RealWorld == "" {
+			t.Errorf("%s does not name the road it stands for, so nobody can go and record it", tr.ID)
+		}
+	}
+}
+
+// The switchover has to work before there is anything to switch over to,
+// because by the time there is, nobody will be testing the mechanism.
+func TestSurveyedGeometryTakesOver(t *testing.T) {
+	authored := []TrackDef{
+		{ID: "akina_down", Name: "Stand-in", Flavour: "authored flavour",
+			Source: SourceAuthored, RealWorld: "Mt. Haruna", Downhill: true,
+			Segments: []Segment{{Name: "Guess", Radius: 16, Length: 60, Width: 6, Surface: SurfaceCoarse}}},
+		{ID: "usui", Name: "Untouched", Flavour: "still authored",
+			Source: SourceAuthored, RealWorld: "Usui Pass",
+			Segments: []Segment{{Name: "Guess", Radius: 20, Length: 60, Width: 5, Surface: SurfaceBroken}}},
+	}
+	surveyed := []TrackDef{
+		{ID: "akina_down", Name: "Mt. Haruna — Downhill",
+			Segments: []Segment{{Name: "Measured", Radius: 18.4, Length: 63, Width: 6.2, Surface: SurfaceSmooth}}},
+	}
+
+	got := mergeSurveyed(authored, surveyed)
+	if len(got) != 2 {
+		t.Fatalf("merge produced %d tracks, want 2", len(got))
+	}
+
+	byID := map[string]TrackDef{}
+	for _, tr := range got {
+		byID[tr.ID] = tr
+	}
+
+	measured := byID["akina_down"]
+	if measured.Source != SourceSurveyed {
+		t.Errorf("a measured track still reports %q", measured.Source)
+	}
+	if measured.Segments[0].Radius != 18.4 {
+		t.Errorf("the authored radius survived: %.1f", measured.Segments[0].Radius)
+	}
+	// The things a GPS cannot know are kept from the authored version.
+	if measured.Flavour != "authored flavour" {
+		t.Errorf("flavour lost on merge: %q", measured.Flavour)
+	}
+	if measured.RealWorld == "" {
+		t.Error("real-world reference lost on merge")
+	}
+	if !measured.Downhill {
+		t.Error("downhill lost on merge — a GPS trace does not know which way the game runs it")
+	}
+
+	// A road nobody recorded is left exactly as it was.
+	if byID["usui"].Source != SourceAuthored || byID["usui"].Segments[0].Radius != 20 {
+		t.Error("an unrecorded road was disturbed by the merge")
+	}
+
+	// And with nothing surveyed at all, nothing changes.
+	if same := mergeSurveyed(authored, nil); len(same) != 2 || same[0].Source != SourceAuthored {
+		t.Error("merging no surveys changed the authored tracks")
+	}
+}

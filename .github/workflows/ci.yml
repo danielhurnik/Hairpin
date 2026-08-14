@@ -50,6 +50,26 @@ jobs:
       - name: Test under race detector
         run: go test -race ./internal/store/... ./internal/api/... ./internal/auth/...
 
+  geometry:
+    name: Track geometry
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: scripts
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # The importer has no real road to check itself against in CI, so it
+      # checks itself against shapes whose answers are known exactly: a circle
+      # of radius R has to measure R, five linked hairpins have to come out as
+      # five hairpins, and both have to survive GPS noise.
+      - name: Geometry self-test
+        run: python3 gen_tracks.py --self-test
+
   client:
     name: Client
     runs-on: ubuntu-latest

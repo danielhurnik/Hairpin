@@ -238,9 +238,56 @@ else is derived from that:
 - **What kind of corner it is** comes from its radius and what leads into it, so
   the attribute weights hang off geometry rather than off a label.
 
-The passes are **authored approximations** of the real roads' character —
-Irohazaka's forty-eight one-way hairpins, Usui's damp stone-walled narrowness,
-Akina's five in a row — not surveys of them. No radius here is a measured one.
+The passes are currently **authored approximations** of the real roads'
+character — Irohazaka's forty-eight one-way hairpins, Usui's damp stone-walled
+narrowness, Akina's five in a row — not surveys of them. Every track says so
+in its own data (`source: "authored"`) and names the road it stands for, so
+the claim is in the API rather than buried in a comment.
+
+**Replacing that with measured geometry takes one command.** `scripts/gen_tracks.py`
+turns a recorded line down the real road — a GPX from a phone, or the OSM way
+via Overpass — into the same structure, measured:
+
+```bash
+cd scripts
+./gen_tracks.py --self-test
+./gen_tracks.py --manifest tracks/manifest.json \
+    --out ../server/internal/game/track_data.go --report
+```
+
+`mergeSurveyed` prefers a measured track over the authored stand-in with the
+same ID and leaves every other road alone, so the switchover happens one pass
+at a time with no other change anywhere. See `scripts/tracks/README.md`.
+
+Length, radius, direction, gradient and where corners begin and end are
+measured. Width and surface come from OSM tags when the way carries them.
+How blind a corner is, and whether a crest unsettles the car, a GPS trace
+cannot know — those stay a judgement.
+
+The importer has no real road to check itself against in CI, so it checks
+itself against shapes whose answers are known exactly. A circle of radius R
+has to measure R; five linked hairpins have to come out as five hairpins that
+alternate; and both have to survive several metres of GPS noise. Measured:
+clean geometry recovers to within 1.6%, noisy to within 8%, and five linked
+16-metre hairpins come back as R15.9–16.5, LRLRL.
+
+Three things had to be got right for that, and all three are written down in
+the code because each one looked like a different bug at first:
+
+- **Three points are not enough.** Menger curvature uses exactly three samples
+  however many are available, so noise lands straight on the answer — a 60m
+  sweeper read as 17m. A least-squares circle fit over the whole window
+  averages it down.
+- **The window has to be chosen by evidence, not by a guess.** Estimating the
+  radius and sizing the window to it is a trap: a wrong estimate picks a short
+  window, and a short window confirms it. The scale is picked by fit residual
+  instead, judged against the trace's own scatter — an absolute tolerance
+  cannot serve both a clean export and a phone under trees.
+- **The fixture lied before the code did.** An early test chained arcs by
+  translating each onto the last without rotating it to match the heading,
+  producing a zigzag with a kink at every join. The pipeline reported wild
+  alternating curvature, which is the correct description of that road and
+  looked exactly like a measurement bug.
 
 Each is authored to disagree with itself: Happogahara is wide and fast and then
 drops to a second-gear corner on broken concrete, so the low, stiff,
@@ -509,11 +556,15 @@ are genuinely not finished, in the order they should be addressed:
 9. **There is no setup UI.** The sheet, the gates, the geometry, the weather
    and the post-race notes are all server-side and covered by tests; nothing
    renders any of it yet.
-10. **Setup input is still notched, not continuous.** Every axis is physical
+10. **No road has actually been recorded yet.** The importer, its self-test
+    and the switchover are all in place and CI-checked, but this environment
+    has no network access to OSM or elevation services, so every pass is still
+    an authored stand-in. One GPX per road turns each into a measurement.
+11. **Setup input is still notched, not continuous.** Every axis is physical
     internally and displays a real value, but the player picks one of five
     positions rather than typing 87mm. Exposing continuous input is now a
     small change rather than a rewrite.
-11. **Happogahara pays more for a setup than the others** — 7.0% against a
+12. **Happogahara pays more for a setup than the others** — 7.0% against a
     3.1% floor on Usui. Authoring a second awkward section into it would even
     that out.
 

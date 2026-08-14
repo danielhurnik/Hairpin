@@ -88,13 +88,33 @@ func drivetrainMod(kind SegmentKind, dt Drivetrain) float64 {
 	return 1.0
 }
 
+// TrackSource records where a track's geometry came from, because the two are
+// not the same claim and the difference should not be buried in a comment.
+type TrackSource string
+
+const (
+	// SourceAuthored means the geometry was written to match what the road is
+	// known for. Internally consistent, plausible, and not measured.
+	SourceAuthored TrackSource = "authored"
+	// SourceSurveyed means radius, length, gradient and direction came out of
+	// a recorded line down the real road via scripts/gen_tracks.py.
+	SourceSurveyed TrackSource = "surveyed"
+)
+
 type TrackDef struct {
-	ID       string    `json:"id"`
-	Name     string    `json:"name"`
-	Flavour  string    `json:"flavour"`
-	Downhill bool      `json:"downhill"`
-	Segments []Segment `json:"segments"`
+	ID       string      `json:"id"`
+	Name     string      `json:"name"`
+	Flavour  string      `json:"flavour"`
+	Downhill bool        `json:"downhill"`
+	Source   TrackSource `json:"source"`
+	// RealWorld names the road this is standing in for, so a survey can be
+	// recorded against the right piece of tarmac.
+	RealWorld string    `json:"real_world,omitempty"`
+	Segments  []Segment `json:"segments"`
 }
+
+// Surveyed reports whether this track's geometry was measured.
+func (t TrackDef) Surveyed() bool { return t.Source == SourceSurveyed }
 
 func (t TrackDef) BaseSeconds() float64 {
 	var s float64
@@ -104,23 +124,75 @@ func (t TrackDef) BaseSeconds() float64 {
 	return s
 }
 
-// Tracks are authored as geometry: radius, length, width, camber, gradient and
-// surface. Duration, risk and corner type are all derived from that at
-// start-up by deriveTrack — nothing below says how long a corner takes or how
-// dangerous it is, because those are consequences rather than choices.
+// Tracks is every pass in the game, measured where anyone has measured it and
+// authored where nobody has yet.
 //
-// The passes are approximations of the real roads' character rather than
-// surveys of them. Each one is authored to disagree with itself: a setup that
-// suits the hairpins is wrong for the fast section, so there is a compromise
-// to find rather than an answer to look up.
-// The derivation is wrapped around the literal rather than run from init()
-// on purpose: the centred setup tables are package-level vars computed from
-// these durations, and Go initialises vars by dependency but runs init()
-// afterwards. Deriving here means anything reading Tracks reads finished ones.
-var Tracks = deriveAll([]TrackDef{
+// The derivation is wrapped around the literal rather than run from init() on
+// purpose: the setup tables are package-level vars computed from these
+// durations, and Go initialises vars by dependency but runs init() afterwards.
+// Deriving here means anything reading Tracks reads finished ones.
+var Tracks = deriveAll(mergeSurveyed(authoredTracks, surveyedTracks))
+
+// mergeSurveyed prefers a measured track over the authored stand-in with the
+// same ID, and keeps the authored one for any road nobody has recorded yet.
+//
+// This is the whole switchover: run scripts/gen_tracks.py over a GPX of the
+// real road and the pass it describes stops being an approximation, with no
+// other change anywhere.
+func mergeSurveyed(authored, surveyed []TrackDef) []TrackDef {
+	if len(surveyed) == 0 {
+		return authored
+	}
+	byID := make(map[string]TrackDef, len(surveyed))
+	for _, t := range surveyed {
+		t.Source = SourceSurveyed
+		byID[t.ID] = t
+	}
+	out := make([]TrackDef, 0, len(authored))
+	for _, a := range authored {
+		if s, ok := byID[a.ID]; ok {
+			// The measured road wins, but the things a GPS cannot know stay
+			// with the version that was written by someone who chose them.
+			if s.Flavour == "" {
+				s.Flavour = a.Flavour
+			}
+			if s.RealWorld == "" {
+				s.RealWorld = a.RealWorld
+			}
+			s.Downhill = a.Downhill
+			out = append(out, s)
+			delete(byID, a.ID)
+			continue
+		}
+		out = append(out, a)
+	}
+	// A surveyed road with no authored counterpart is still a road.
+	for _, t := range surveyed {
+		if _, unused := byID[t.ID]; unused {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// authoredTracks are the stand-ins: geometry written to match what each road
+// is known for, internally consistent under the race model, and not measured.
+// Duration, risk and corner type are all derived from the geometry at start-up
+// by deriveTrack — nothing below says how long a corner takes or how dangerous
+// it is, because those are consequences rather than choices.
+//
+// Each is authored to disagree with itself: a setup that suits the hairpins is
+// wrong for the fast section, so there is a compromise to find rather than an
+// answer to look up.
+//
+// Any of these is replaced the moment its road is recorded — see
+// scripts/gen_tracks.py and mergeSurveyed.
+var authoredTracks = []TrackDef{
 	{
 		ID: "akina_down", Name: "Mt. Akina — Downhill", Downhill: true,
-		Flavour: "Five consecutive hairpins. The gutter is a line, if you're mad enough.",
+		Flavour:   "Five consecutive hairpins. The gutter is a line, if you're mad enough.",
+		Source:    SourceAuthored,
+		RealWorld: "Mt. Haruna — the prefectural road down the east face from Lake Haruna towards Takasaki, Gunma. \"Akina\" is the name the manga gave it.",
 		Segments: []Segment{
 			{Name: "Start Line Chute", Length: 260, Width: 7.0, Gradient: -6, Surface: SurfaceSmooth},
 			{Name: "First Right", Radius: 95, Length: 120, Width: 6.8, Banking: 2.0, Gradient: -6, Surface: SurfaceSmooth, Dir: 1},
@@ -138,7 +210,9 @@ var Tracks = deriveAll([]TrackDef{
 	},
 	{
 		ID: "myogi_up", Name: "Myogi — Uphill",
-		Flavour: "Short, tight, and the crowd stands close enough to touch the mirrors.",
+		Flavour:   "Short, tight, and the crowd stands close enough to touch the mirrors.",
+		Source:    SourceAuthored,
+		RealWorld: "Mt. Myogi — the climb on the Gunma side, tight and low-speed with almost no run-off.",
 		Segments: []Segment{
 			{Name: "Launch", Length: 200, Width: 6.6, Gradient: 5, Surface: SurfaceCoarse},
 			{Name: "Tight Right", Radius: 19, Length: 60, Width: 5.8, Banking: 1.0, Gradient: 7, Surface: SurfaceCoarse, Dir: 1},
@@ -154,7 +228,9 @@ var Tracks = deriveAll([]TrackDef{
 	},
 	{
 		ID: "irohazaka", Name: "Irohazaka — One Way Down", Downhill: true,
-		Flavour: "Forty-eight corners, all numbered, all going the same direction. Down.",
+		Flavour:   "Forty-eight corners, all numbered, all going the same direction. Down.",
+		Source:    SourceAuthored,
+		RealWorld: "Iroha-zaka, Nikko, Tochigi. Two one-way roads between Nikko and Lake Chuzenji; forty-eight curves between them, each signed with a character of the Iroha poem. This is the descending one.",
 		Segments: []Segment{
 			{Name: "Gate Straight", Length: 240, Width: 7.6, Gradient: -5, Surface: SurfaceSmooth},
 			{Name: "Corner 1 — Ha", Radius: 18, Length: 64, Width: 7.2, Banking: 1.5, Gradient: -8, Surface: SurfaceSmooth, Dir: -1},
@@ -171,7 +247,9 @@ var Tracks = deriveAll([]TrackDef{
 	},
 	{
 		ID: "happogahara", Name: "Happogahara — High Speed",
-		Flavour: "Wide, fast, and it rewards the brave over the clever.",
+		Flavour:   "Wide, fast, and it rewards the brave over the clever.",
+		Source:    SourceAuthored,
+		RealWorld: "Happogahara — a wide, fast road with a slow infield section. The one place in the game with room to make a mistake in.",
 		Segments: []Segment{
 			{Name: "Rolling Start", Length: 460, Width: 13.0, Gradient: 0, Surface: SurfaceSmooth},
 			{Name: "Flat-Out Kink", Radius: 240, Length: 180, Width: 12.5, Banking: 3.0, Gradient: 0, Surface: SurfaceSmooth, Dir: 1},
@@ -191,7 +269,9 @@ var Tracks = deriveAll([]TrackDef{
 	},
 	{
 		ID: "akagi_down", Name: "Mt. Akagi — Downhill", Downhill: true,
-		Flavour: "Rhythm section after rhythm section. Break the rhythm, lose the race.",
+		Flavour:   "Rhythm section after rhythm section. Break the rhythm, lose the race.",
+		Source:    SourceAuthored,
+		RealWorld: "Mt. Akagi — the descent on the south face, Gunma. Long linked rhythm sections.",
 		Segments: []Segment{
 			{Name: "Summit Start", Length: 250, Width: 7.4, Gradient: -5, Surface: SurfaceSmooth},
 			{Name: "Opening Sweeper", Radius: 105, Length: 145, Width: 7.2, Banking: 2.0, Gradient: -6, Surface: SurfaceSmooth, Dir: 1},
@@ -208,7 +288,9 @@ var Tracks = deriveAll([]TrackDef{
 	},
 	{
 		ID: "usui", Name: "Usui Pass — Downhill", Downhill: true,
-		Flavour: "Narrow, damp, and lined with a hundred and eighty corners of history.",
+		Flavour:   "Narrow, damp, and lined with a hundred and eighty corners of history.",
+		Source:    SourceAuthored,
+		RealWorld: "Usui Pass, on the old Route 18 between Yokokawa in Gunma and Karuizawa in Nagano. A hundred and eighty-odd numbered curves, narrow, wooded and rarely dry.",
 		Segments: []Segment{
 			{Name: "Cold Start", Length: 210, Width: 5.8, Gradient: -4, Surface: SurfacePatched},
 			{Name: "Damp Right", Radius: 62, Length: 120, Width: 5.4, Banking: -1.0, Gradient: -6, Surface: SurfacePatched, Dir: 1},
@@ -222,7 +304,7 @@ var Tracks = deriveAll([]TrackDef{
 			{Name: "Bridge Straight", Length: 240, Width: 6.0, Gradient: -2, Surface: SurfaceSmooth},
 		},
 	},
-})
+}
 
 func TrackByID(id string) (TrackDef, bool) {
 	for _, t := range Tracks {
