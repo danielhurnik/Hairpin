@@ -1,5 +1,6 @@
+import { Link } from 'expo-router';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { ApiError, api } from '../../src/api';
 import { CarArt, DriverStatBlock, LiveryColors, RarityBadge, st } from '../../src/components/game';
 import { RaceHistory } from '../../src/components/history';
@@ -115,6 +116,8 @@ export default function RaceScreen() {
         </Row>
       </Card>
 
+      <TonightCard />
+
       {!preview ? (
         <Loading label="Finding someone on the pass…" />
       ) : (
@@ -146,6 +149,45 @@ export default function RaceScreen() {
 
       <RaceHistory />
     </Screen>
+  );
+}
+
+/**
+ * The road and the weather, before you commit to them. The full sheet lives on
+ * the Setup tab; this is the reminder that there is one, and that it is set for
+ * a specific road on a specific night.
+ */
+function TonightCard() {
+  const { state } = useGame();
+  if (!state) return null;
+  const { track, conditions, axes, any_unlocked } = state.setup;
+  const moved = axes.filter((a) => a.unlocked && Math.abs(a.setting - a.factory) > a.step / 2);
+
+  return (
+    <Card>
+      <Row style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <View style={{ flex: 1 }}>
+          <Text style={t.label}>Tonight's pass</Text>
+          <Text style={t.heading}>{track.name}</Text>
+          <Text style={t.small}>{conditions.label}</Text>
+        </View>
+        <Link href="/setup" asChild>
+          <Pressable>
+            <Text style={[t.small, { color: colors.accent }]}>Set the car up →</Text>
+          </Pressable>
+        </Link>
+      </Row>
+      <Text style={t.tiny}>
+        {!any_unlocked
+          ? 'Nothing on this car is adjustable yet — upgrades unlock the spanners.'
+          : moved.length === 0
+            ? 'Running the settings it left the workshop on.'
+            : moved
+                .slice(0, 4)
+                .map((a) => `${a.label} ${a.display}`)
+                .join(' · ') + (moved.length > 4 ? ` · +${moved.length - 4} more` : '')}
+      </Text>
+    </Card>
   );
 }
 
@@ -220,7 +262,10 @@ function ReplayView({
   return (
     <Screen>
       <Card>
-        <Text style={t.label}>{outcome.replay.track_name}</Text>
+        <Row style={{ justifyContent: 'space-between' }}>
+          <Text style={t.label}>{outcome.replay.track_name}</Text>
+          <Text style={t.label}>{outcome.replay.conditions?.label}</Text>
+        </Row>
         <Row style={{ justifyContent: 'space-between' }}>
           <Text style={t.heading}>You</Text>
           <Text style={t.heading}>{outcome.opponent.name}</Text>
@@ -249,6 +294,41 @@ function ReplayView({
 
       {done && (
         <>
+          {outcome.crashed && (
+            <Card>
+              <Text style={[t.title, { color: colors.red }]}>Into the barrier</Text>
+              <Text style={t.small}>
+                {outcome.replay.crash_segment
+                  ? `It let go at ${outcome.replay.crash_segment}. `
+                  : ''}
+                The run ends there — no reward, and the car has to be put straight.
+              </Text>
+              <Text style={[t.body, { color: colors.red }]}>
+                −¥{(outcome.repair_cost ?? 0).toLocaleString()} in repairs
+              </Text>
+              <Text style={t.tiny}>
+                A sheet with nothing left in reserve is quick right up until it is not. Ride
+                height, damping, camber and boost are the settings that take the margin away.
+              </Text>
+            </Card>
+          )}
+
+          {outcome.setup_notes?.length ? (
+            <Card>
+              <Text style={t.label}>What the car did</Text>
+              {outcome.setup_notes.map((note) => (
+                <Row key={note.segment + note.text} gap={2} style={{ alignItems: 'flex-start' }}>
+                  <Text style={[t.small, { color: colors.accent }]}>•</Text>
+                  <Text style={[t.small, { flex: 1 }]}>{note.text}</Text>
+                </Row>
+              ))}
+              <Text style={t.tiny}>
+                Where the sheet cost you time, and nothing about which way to turn the spanner.
+                That part is yours.
+              </Text>
+            </Card>
+          ) : null}
+
           <Card tone="accent">
             <Text style={[t.title, { color: outcome.won ? colors.green : colors.red }]}>
               {outcome.won ? 'WIN' : 'LOSS'} by {outcome.replay.margin.toFixed(2)}s

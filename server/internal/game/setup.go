@@ -850,8 +850,15 @@ func SetupFeedback(b Build, t TrackDef) []SetupNote {
 				0.032 * s.Damping / 2 * rough(seg) * heavy})
 		}
 		if s.Camber > 0 && stopping(seg) > 0.55 {
+			// A corner is braked *for*; a straight is braked *at the end of*.
+			// Same term either way, but "under braking for the Middle
+			// Straight" reads like the road was misfiled.
+			where := "under braking for " + seg.Name
+			if seg.Radius <= 0 {
+				where = "braking at the end of " + seg.Name
+			}
 			notes = append(notes, SetupNote{seg.Name,
-				"Not enough tyre on the road under braking for " + seg.Name + ".",
+				"Not enough tyre on the road " + where + ".",
 				0.036 * s.Camber / 2 * stopping(seg) * (1 + 0.5*slick)})
 		}
 		if s.Boost > 0 && crawling(seg) > 0.5 {

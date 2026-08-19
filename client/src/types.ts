@@ -161,6 +161,97 @@ export type LiveryOption = {
   equipped: boolean;
 };
 
+/** The weather on the pass tonight. Fixed before you tune, revealed with the road. */
+export type Conditions = {
+  damp: number;
+  temp_c: number;
+  label: string;
+  note: string;
+};
+
+/**
+ * One piece of road. The geometry is authored (or measured); everything from
+ * `kind` down is derived from it by the server and only rendered here.
+ */
+export type TrackSegment = {
+  name: string;
+  radius_m?: number;
+  length_m: number;
+  width_m: number;
+  banking_deg: number;
+  gradient_pct: number;
+  surface: string;
+  crest?: boolean;
+  blind?: boolean;
+  direction: number;
+  kind: string;
+  base_seconds: number;
+  risk: number;
+  entry_speed: number;
+  exit_speed: number;
+  lateral_g: number;
+  rhythm?: boolean;
+  wet?: number;
+  cold?: number;
+};
+
+export type TrackDef = {
+  id: string;
+  name: string;
+  flavour: string;
+  downhill: boolean;
+  /** "authored" is a stand-in; "surveyed" came off a recording of the real road. */
+  source: 'authored' | 'surveyed';
+  real_world?: string;
+  gradient_measured: boolean;
+  segments: TrackSegment[];
+};
+
+/**
+ * One adjustment on the sheet. `setting` is the real number — 87mm, 2.35 bar,
+ * 4.22 — and `value` is the same thing as a position between `min` and `max`,
+ * which is what the slider moves. Send either back; the server converts.
+ */
+export type SetupAxis = {
+  id: string;
+  label: string;
+  category: string;
+  min_tier: number;
+  part: string;
+  unit: string;
+  values: number[];
+  step: number;
+  decimals: number;
+  low: string;
+  high: string;
+  note: string;
+  setting: number;
+  setting_low: number;
+  setting_high: number;
+  factory: number;
+  display: string;
+  value: number;
+  min: number;
+  max: number;
+  unlocked: boolean;
+  requires?: string;
+};
+
+export type SetupView = {
+  chassis_id: string;
+  chassis_name: string;
+  track: TrackDef;
+  conditions: Conditions;
+  axes: SetupAxis[];
+  any_unlocked: boolean;
+};
+
+/** What the car did on the night. The only feedback the game gives on a sheet. */
+export type SetupNote = {
+  segment: string;
+  text: string;
+};
+
 export type Opponent = {
   player_id: string;
   name: string;
@@ -202,6 +293,10 @@ export type RaceReplay = {
   opponent_rating: number;
   lead_changes: number;
   upset: boolean;
+  challenger_crashed?: boolean;
+  opponent_crashed?: boolean;
+  crash_segment?: string;
+  conditions: Conditions;
 };
 
 export type RaceOutcome = {
@@ -219,6 +314,10 @@ export type RaceOutcome = {
   free_races_left: number;
   player: Player;
   your_rating: number;
+  /** A sheet that asked too much of the road ends the run and costs a repair. */
+  crashed?: boolean;
+  repair_cost?: number;
+  setup_notes?: SetupNote[];
 };
 
 export type ShopOffer = {
@@ -273,6 +372,7 @@ export type GameState = {
   job_board: JobOffer[];
   garage: UpgradeOption[];
   cars: CarOption[];
+  setup: SetupView;
   ladder: LadderEntry[];
   liveries: LiveryOption[];
   server_time: string;
