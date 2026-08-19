@@ -119,6 +119,12 @@ func migrateCars(db *sql.DB) error {
 // migrateSetups adds the setup sheet to cars that predate it. Every column
 // defaults to zero, which is the factory setting, so existing cars come
 // through driving exactly as they did before.
+//
+// The columns hold a position on an axis rather than a notch, so they are
+// REAL. A database created before the sheet became continuous declared them
+// INTEGER, which needs no rebuild: SQLite's integer affinity converts a value
+// only when it can do so losslessly, so -0.6 is stored and read back as -0.6
+// either way. The declared type is tidiness, not correctness.
 func migrateSetups(db *sql.DB) error {
 	has, err := hasColumn(db, "player_cars", "setup_gearing")
 	if err != nil || has {
@@ -130,7 +136,7 @@ func migrateSetups(db *sql.DB) error {
 	}
 	defer tx.Rollback()
 	for _, col := range setupColumns {
-		if _, err := tx.Exec(`ALTER TABLE player_cars ADD COLUMN ` + col + ` INTEGER NOT NULL DEFAULT 0`); err != nil {
+		if _, err := tx.Exec(`ALTER TABLE player_cars ADD COLUMN ` + col + ` REAL NOT NULL DEFAULT 0`); err != nil {
 			return fmt.Errorf("add %s: %w", col, err)
 		}
 	}

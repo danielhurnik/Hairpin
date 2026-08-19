@@ -336,9 +336,15 @@ func (s *Server) equipCar(w http.ResponseWriter, r *http.Request, p *store.Playe
 // Setup
 // ---------------------------------------------------------------------------
 
+// setupReq is one adjustment. `setting` is the real number on the sheet — 87
+// for 87mm of ride height, 2.35 for 2.35 bar — and `value` is the same thing
+// as a normalised position, which is what a slider dragged to the end of its
+// travel has to hand. Exactly one of the two, so a request that means nothing
+// in particular is a 400 rather than a silent reset to factory.
 type setupReq struct {
-	Axis  string `json:"axis"`
-	Value int    `json:"value"`
+	Axis    string   `json:"axis"`
+	Setting *float64 `json:"setting,omitempty"`
+	Value   *float64 `json:"value,omitempty"`
 }
 
 func (s *Server) setup(w http.ResponseWriter, r *http.Request, p *store.Player) {
@@ -350,7 +356,19 @@ func (s *Server) setSetup(w http.ResponseWriter, r *http.Request, p *store.Playe
 	if !decode(w, r, &req) {
 		return
 	}
-	p2, err := s.store.SetSetup(r.Context(), p.ID, req.Axis, req.Value)
+	if (req.Setting == nil) == (req.Value == nil) {
+		fail(w, http.StatusBadRequest, "invalid", "send either setting or value")
+		return
+	}
+	var (
+		p2  *store.Player
+		err error
+	)
+	if req.Setting != nil {
+		p2, err = s.store.SetSetup(r.Context(), p.ID, req.Axis, *req.Setting)
+	} else {
+		p2, err = s.store.SetSetupPosition(r.Context(), p.ID, req.Axis, *req.Value)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return

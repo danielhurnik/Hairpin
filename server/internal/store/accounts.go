@@ -233,10 +233,12 @@ func botSetup(rng *rand.Rand, strength float64, tiers game.UpgradeTiers) game.Se
 	if strength < 0.22 {
 		return game.Setup{} // still figuring out which end the engine is in
 	}
-	// How far from factory this driver is willing to go.
-	reach := 1
+	// How far from factory this driver is willing to go, as a fraction of the
+	// axis. Nobody sets a car up in notches, so neither do they: a rival runs
+	// 88mm because that is where they stopped turning the collar.
+	reach := 1.0
 	if strength > 0.62 {
-		reach = 2
+		reach = 2.0
 	}
 	// How many axes they have actually thought about.
 	touched := 2 + int(strength*4)
@@ -251,7 +253,7 @@ func botSetup(rng *rand.Rand, strength float64, tiers game.UpgradeTiers) game.Se
 		if !game.AxisUnlocked(axis, tiers) {
 			continue
 		}
-		v := rng.IntN(2*reach+1) - reach
+		v := axis.Quantize((rng.Float64()*2 - 1) * reach)
 		s, _ = s.With(axis.ID, v)
 	}
 	// Whatever they set, they cannot adjust a part they have not fitted.

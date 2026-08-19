@@ -975,13 +975,16 @@ type setupView struct {
 			Name string `json:"name"`
 		} `json:"track"`
 		Axes []struct {
-			ID       string  `json:"id"`
-			Value    int     `json:"value"`
-			Setting  float64 `json:"setting"`
-			Display  string  `json:"display"`
-			Unit     string  `json:"unit"`
-			Unlocked bool    `json:"unlocked"`
-			Requires string  `json:"requires"`
+			ID          string  `json:"id"`
+			Value       float64 `json:"value"`
+			Setting     float64 `json:"setting"`
+			SettingLow  float64 `json:"setting_low"`
+			SettingHigh float64 `json:"setting_high"`
+			Step        float64 `json:"step"`
+			Display     string  `json:"display"`
+			Unit        string  `json:"unit"`
+			Unlocked    bool    `json:"unlocked"`
+			Requires    string  `json:"requires"`
 		} `json:"axes"`
 	} `json:"setup"`
 	Rating float64 `json:"rating"`
@@ -1090,10 +1093,49 @@ func TestSetupSheetUnlocksWithParts(t *testing.T) {
 		t.Error("gearing did not stick")
 	}
 	if row.Display != "3.70" {
-		t.Errorf("final drive at notch -2 displays as %q, want the real ratio 3.70", row.Display)
+		t.Errorf("the longest final drive displays as %q, want the real ratio 3.70", row.Display)
 	}
 	if diff := after.Rating - before.Rating; diff > 0.05 || diff < -0.05 {
 		t.Errorf("overall rating moved by %.4f on a setup change", diff)
+	}
+}
+
+// The sheet is set in the units it is written in: a player asks for 87mm of
+// ride height, not for a position on an abstract scale.
+func TestSetupIsSetInRealUnits(t *testing.T) {
+	h := newHarness(t, 20)
+	h.buildEverything()
+
+	var after setupView
+	h.do("POST", "/v1/setup", map[string]any{"axis": "ride_height", "setting": 87}, &after)
+	row := after.Setup.Axes[after.axis(t, "ride_height")]
+	if row.Setting != 87 {
+		t.Errorf("asked for 87mm and the sheet reads %vmm", row.Setting)
+	}
+	if row.Display != "87 mm" {
+		t.Errorf("87mm displays as %q", row.Display)
+	}
+	// Anywhere between the old five positions is reachable, including values
+	// that are not a whole notch.
+	for _, mm := range []float64{129, 113, 101, 88, 71} {
+		var step setupView
+		h.do("POST", "/v1/setup", map[string]any{"axis": "ride_height", "setting": mm}, &step)
+		if got := step.Setup.Axes[step.axis(t, "ride_height")].Setting; got != mm {
+			t.Errorf("asked for %vmm and got %vmm", mm, got)
+		}
+	}
+	// Finer than the workshop can work is rounded to what it can.
+	var fine setupView
+	h.do("POST", "/v1/setup", map[string]any{"axis": "ride_height", "setting": 92.4}, &fine)
+	if got := fine.Setup.Axes[fine.axis(t, "ride_height")].Setting; got != 92 {
+		t.Errorf("92.4mm was stored as %vmm, want it snapped to the millimetre", got)
+	}
+	// And the sheet says what the ends of the range are, so a client can offer
+	// them without knowing anything about the model.
+	row = fine.Setup.Axes[fine.axis(t, "ride_height")]
+	if row.SettingLow != 130 || row.SettingHigh != 70 || row.Step != 1 {
+		t.Errorf("ride height publishes %v..%v step %v, want 130..70 step 1",
+			row.SettingLow, row.SettingHigh, row.Step)
 	}
 }
 
@@ -1129,11 +1171,25 @@ func TestSetupCannotBeCheated(t *testing.T) {
 
 	h.buildEverything()
 
-	// Values off the end of the sheet.
-	for _, v := range []int{game.SetupMax + 1, game.SetupMin - 1, 99999} {
+	// Positions off the end of the sheet.
+	for _, v := range []float64{game.SetupMax + 0.01, game.SetupMin - 0.01, 99999} {
 		if code := h.try("POST", "/v1/setup", map[string]any{"axis": "gearing", "value": v}, nil); code != http.StatusBadRequest {
-			t.Errorf("gearing %d returned %d, want 400", v, code)
+			t.Errorf("position %v returned %d, want 400", v, code)
 		}
+	}
+	// Final drives no gearset in the game has.
+	for _, v := range []float64{5.5, 1.0, -4.3} {
+		if code := h.try("POST", "/v1/setup", map[string]any{"axis": "gearing", "setting": v}, nil); code != http.StatusBadRequest {
+			t.Errorf("a %v final drive returned %d, want 400", v, code)
+		}
+	}
+	// A request that says nothing, and one that says two things.
+	if code := h.try("POST", "/v1/setup", map[string]any{"axis": "gearing"}, nil); code != http.StatusBadRequest {
+		t.Errorf("a request with no setting returned %d, want 400", code)
+	}
+	if code := h.try("POST", "/v1/setup",
+		map[string]any{"axis": "gearing", "value": 1, "setting": 4.3}, nil); code != http.StatusBadRequest {
+		t.Errorf("a request naming both a position and a setting returned %d, want 400", code)
 	}
 	// An axis that does not exist.
 	if code := h.try("POST", "/v1/setup", map[string]any{"axis": "nitrous", "value": 1}, nil); code != http.StatusBadRequest {

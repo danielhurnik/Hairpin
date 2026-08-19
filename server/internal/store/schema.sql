@@ -90,13 +90,13 @@ CREATE TABLE IF NOT EXISTS player_cars (
     -- The setup sheet, one per car. Zero is however it left the workshop; an
     -- axis is only adjustable once the tier above has fitted the part for it,
     -- and anything set on a part that is not fitted is stripped on read.
-    setup_gearing   INTEGER NOT NULL DEFAULT 0,
-    setup_boost     INTEGER NOT NULL DEFAULT 0,
-    setup_pressure  INTEGER NOT NULL DEFAULT 0,
-    setup_ballast   INTEGER NOT NULL DEFAULT 0,
-    setup_ride      INTEGER NOT NULL DEFAULT 0,
-    setup_camber    INTEGER NOT NULL DEFAULT 0,
-    setup_damping   INTEGER NOT NULL DEFAULT 0,
+    setup_gearing   REAL    NOT NULL DEFAULT 0,
+    setup_boost     REAL    NOT NULL DEFAULT 0,
+    setup_pressure  REAL    NOT NULL DEFAULT 0,
+    setup_ballast   REAL    NOT NULL DEFAULT 0,
+    setup_ride      REAL    NOT NULL DEFAULT 0,
+    setup_camber    REAL    NOT NULL DEFAULT 0,
+    setup_damping   REAL    NOT NULL DEFAULT 0,
     acquired_at INTEGER NOT NULL,
     PRIMARY KEY (player_id, chassis_id)
 );

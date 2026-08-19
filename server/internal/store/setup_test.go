@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"github.com/danielhurnik/hairpin/server/internal/game"
@@ -29,18 +30,18 @@ func TestSetupNeedsThePartFitted(t *testing.T) {
 
 	// A stock car has nothing to turn.
 	for _, a := range game.SetupAxes {
-		if _, err := st.SetSetup(ctx, p.ID, a.ID, 1); !errors.Is(err, ErrPartMissing) {
+		if _, err := st.SetSetup(ctx, p.ID, a.ID, a.Setting(1)); !errors.Is(err, ErrPartMissing) {
 			t.Errorf("adjusting %q on a stock car returned %v, want ErrPartMissing", a.ID, err)
 		}
 	}
 
 	// Coilovers arrive at suspension tier 2 and bring ride height with them.
 	buildUp(t, st, p.ID, 2)
-	if _, err := st.SetSetup(ctx, p.ID, "ride_height", -2); err != nil {
+	if _, err := st.SetSetup(ctx, p.ID, "ride_height", 87); err != nil {
 		t.Fatalf("ride height on coilovers: %v", err)
 	}
 	// Camber still needs the arms.
-	if _, err := st.SetSetup(ctx, p.ID, "camber", 1); !errors.Is(err, ErrPartMissing) {
+	if _, err := st.SetSetup(ctx, p.ID, "camber", -2.8); !errors.Is(err, ErrPartMissing) {
 		t.Errorf("camber without pillow-ball arms returned %v, want ErrPartMissing", err)
 	}
 
@@ -48,9 +49,53 @@ func TestSetupNeedsThePartFitted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if after.Setup.Ride != -2 {
-		t.Errorf("ride height stored as %d, want -2", after.Setup.Ride)
+	ride, _ := game.AxisByID("ride_height")
+	if got := ride.Setting(after.Setup.Ride); got != 87 {
+		t.Errorf("ride height stored as %.2fmm, want the 87mm that was asked for", got)
 	}
+}
+
+// The whole point of the sheet being physical: a player sets a number, not one
+// of five positions, and gets back exactly the number they set.
+func TestSetupTakesRealNumbers(t *testing.T) {
+	st, _, p := newTestStore(t, 4)
+	ctx := context.Background()
+	buildUp(t, st, p.ID, game.MaxTier)
+
+	// Every axis, at a value that is deliberately not one of the old notches.
+	for _, a := range game.SetupAxes {
+		between := (a.Setting(0) + a.Setting(1)) / 2
+		want := a.Factory() + roundStep(between-a.Factory(), a.Step)
+		if _, err := st.SetSetup(ctx, p.ID, a.ID, between); err != nil {
+			t.Fatalf("set %s to %v: %v", a.ID, between, err)
+		}
+		after, err := st.GetPlayer(ctx, p.ID)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		v, _ := after.Setup.Get(a.ID)
+		if got := a.Setting(v); math.Abs(got-want) > a.Step/2 {
+			t.Errorf("%s set to %v came back as %v, want %v", a.ID, between, got, want)
+		}
+	}
+
+	// And the workshop's own precision is enforced: nothing finer than a step
+	// survives, because nothing finer than a step can be set on the car.
+	ride, _ := game.AxisByID("ride_height")
+	if _, err := st.SetSetup(ctx, p.ID, "ride_height", 87.4); err != nil {
+		t.Fatalf("set ride height: %v", err)
+	}
+	after, err := st.GetPlayer(ctx, p.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got := ride.Setting(after.Setup.Ride); got != 87 {
+		t.Errorf("87.4mm stored as %vmm, want it snapped to the millimetre", got)
+	}
+}
+
+func roundStep(v, step float64) float64 {
+	return math.Round(v/step) * step
 }
 
 func TestSetupRejectsValuesOffTheSheet(t *testing.T) {
@@ -58,9 +103,16 @@ func TestSetupRejectsValuesOffTheSheet(t *testing.T) {
 	ctx := context.Background()
 	buildUp(t, st, p.ID, game.MaxTier)
 
-	for _, v := range []int{game.SetupMax + 1, game.SetupMin - 1, 99, -99} {
+	// Final drives the workshop does not have gears for.
+	for _, v := range []float64{5.2, 2.9, 99, -99, math.NaN(), math.Inf(1)} {
 		if _, err := st.SetSetup(ctx, p.ID, "gearing", v); !errors.Is(err, ErrInvalid) {
-			t.Errorf("gearing %d returned %v, want ErrInvalid", v, err)
+			t.Errorf("gearing %v returned %v, want ErrInvalid", v, err)
+		}
+	}
+	// Positions off the ends of the axis, for a client that sends those.
+	for _, v := range []float64{game.SetupMax + 0.01, game.SetupMin - 0.01, 99, math.NaN()} {
+		if _, err := st.SetSetupPosition(ctx, p.ID, "gearing", v); !errors.Is(err, ErrInvalid) {
+			t.Errorf("position %v returned %v, want ErrInvalid", v, err)
 		}
 	}
 	if _, err := st.SetSetup(ctx, p.ID, "nitrous", 1); !errors.Is(err, ErrInvalid) {
@@ -74,7 +126,7 @@ func TestSetupsArePerCar(t *testing.T) {
 	ctx := context.Background()
 	buildUp(t, st, p.ID, game.MaxTier)
 
-	if _, err := st.SetSetup(ctx, p.ID, "gearing", -2); err != nil {
+	if _, err := st.SetSetup(ctx, p.ID, "gearing", 3.70); err != nil {
 		t.Fatalf("set gearing: %v", err)
 	}
 
@@ -85,15 +137,16 @@ func TestSetupsArePerCar(t *testing.T) {
 		t.Fatalf("switch: %v", err)
 	}
 	if switched.Setup.Gearing != 0 {
-		t.Errorf("the new car came with gearing %d, want a factory 0", switched.Setup.Gearing)
+		t.Errorf("the new car came with gearing %v, want a factory 0", switched.Setup.Gearing)
 	}
 
 	back, err := st.SetActiveCar(ctx, p.ID, game.StarterChassis)
 	if err != nil {
 		t.Fatalf("switch back: %v", err)
 	}
-	if back.Setup.Gearing != -2 {
-		t.Errorf("returning to the first car reads gearing %d, want -2", back.Setup.Gearing)
+	gearing, _ := game.AxisByID("gearing")
+	if got := gearing.Setting(back.Setup.Gearing); got != 3.70 {
+		t.Errorf("returning to the first car reads a %.2f final drive, want the 3.70 it was left on", got)
 	}
 }
 
@@ -108,7 +161,7 @@ func TestAdjustingASetupCostsNothing(t *testing.T) {
 		t.Fatalf("get: %v", err)
 	}
 	for i := 0; i < 20; i++ {
-		if _, err := st.SetSetup(ctx, p.ID, "camber", i%3-1); err != nil {
+		if _, err := st.SetSetup(ctx, p.ID, "camber", -1.0-float64(i)*0.1); err != nil {
 			t.Fatalf("adjust: %v", err)
 		}
 	}
@@ -128,7 +181,7 @@ func TestResetSetupReturnsTheCarToFactory(t *testing.T) {
 	buildUp(t, st, p.ID, game.MaxTier)
 
 	for _, a := range game.SetupAxes {
-		if _, err := st.SetSetup(ctx, p.ID, a.ID, 2); err != nil {
+		if _, err := st.SetSetup(ctx, p.ID, a.ID, a.SettingHigh()); err != nil {
 			t.Fatalf("set %s: %v", a.ID, err)
 		}
 	}
@@ -136,7 +189,7 @@ func TestResetSetupReturnsTheCarToFactory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
-	if after.Setup != (game.Setup{}) {
+	if !after.Setup.IsFactory() {
 		t.Errorf("reset left %+v behind", after.Setup)
 	}
 }
@@ -181,8 +234,14 @@ func TestSetupViewExplainsWhatIsLocked(t *testing.T) {
 			t.Errorf("axis %q does not say what it is set to", a.ID)
 		}
 		if a.Setting != a.SetupAxis.Setting(a.Value) {
-			t.Errorf("axis %q reports %v but its notch %d is %v",
+			t.Errorf("axis %q reports %v but position %v is %v",
 				a.ID, a.Setting, a.Value, a.SetupAxis.Setting(a.Value))
+		}
+		// A client needs the ends of the range to offer them, and the step to
+		// know how finely they can be asked for.
+		if a.SettingLow == a.SettingHigh || a.Step <= 0 {
+			t.Errorf("axis %q publishes range %v..%v step %v — nothing continuous can be built on that",
+				a.ID, a.SettingLow, a.SettingHigh, a.Step)
 		}
 	}
 }
@@ -205,7 +264,7 @@ func TestTuningDoesNotMoveTheGarageRating(t *testing.T) {
 	baseRating := game.OverallRating(base)
 
 	for _, a := range game.SetupAxes {
-		if _, err := st.SetSetup(ctx, p.ID, a.ID, 2); err != nil {
+		if _, err := st.SetSetup(ctx, p.ID, a.ID, a.SettingHigh()); err != nil {
 			t.Fatalf("set %s: %v", a.ID, err)
 		}
 	}
@@ -247,7 +306,7 @@ func TestBotsArriveWithSetupsOfTheirOwn(t *testing.T) {
 			t.Fatalf("scan: %v", err)
 		}
 		total++
-		if s != (game.Setup{}) {
+		if !s.IsFactory() {
 			if rank <= 20 {
 				tunedTop++
 			} else {

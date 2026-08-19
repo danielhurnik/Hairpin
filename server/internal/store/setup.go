@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math"
 	"strconv"
+	"strings"
 
 	"github.com/danielhurnik/hairpin/server/internal/game"
 )
@@ -12,7 +14,7 @@ import (
 // SetupAxisView is one row of the setup sheet: what it is, whether the car has
 // the part for it, and exactly what it is set to.
 //
-// It carries the real number — 85mm, 2.4 bar, 4.30 — and no opinion whatsoever
+// It carries the real number — 87mm, 2.35 bar, 4.22 — and no opinion whatsoever
 // about whether that is the right one. An earlier version scored each axis
 // against the upcoming pass, which is a solver: whoever worked out the best
 // answer once would have worked it out for everybody. Precision belongs in the
@@ -20,13 +22,20 @@ import (
 // worth is something the run tells you afterwards.
 type SetupAxisView struct {
 	game.SetupAxis
-	Value int `json:"value"`
-	Min   int `json:"min"`
-	Max   int `json:"max"`
-	// Setting is the real value at the current notch, and Display is it
-	// formatted with its unit.
-	Setting  float64 `json:"setting"`
-	Display  string  `json:"display"`
+	// Setting is what the axis is set to, in the units on the sheet, and
+	// Display is it written out. SettingLow and SettingHigh are the ends of
+	// what the workshop can reach, so a client can offer the whole range
+	// without knowing anything about how the model reads it.
+	Setting     float64 `json:"setting"`
+	SettingLow  float64 `json:"setting_low"`
+	SettingHigh float64 `json:"setting_high"`
+	Factory     float64 `json:"factory"`
+	Display     string  `json:"display"`
+	// Value is the same setting as the normalised position the model works in.
+	// Published because it is what a slider wants; nothing has to send it back.
+	Value    float64 `json:"value"`
+	Min      float64 `json:"min"`
+	Max      float64 `json:"max"`
 	Unlocked bool    `json:"unlocked"`
 	// Locked axes say what to buy, in the language of the car.
 	Requires string `json:"requires,omitempty"`
@@ -77,13 +86,16 @@ func (s *Store) SetupFor(ctx context.Context, p *Player) SetupView {
 		unlocked := game.AxisUnlocked(a, p.Tiers)
 		value, _ := live.Get(a.ID)
 		row := SetupAxisView{
-			SetupAxis: a,
-			Value:     value,
-			Min:       game.SetupMin,
-			Max:       game.SetupMax,
-			Setting:   a.Setting(value),
-			Display:   display(a, value),
-			Unlocked:  unlocked,
+			SetupAxis:   a,
+			Setting:     a.Setting(value),
+			SettingLow:  a.SettingLow(),
+			SettingHigh: a.SettingHigh(),
+			Factory:     a.Factory(),
+			Display:     display(a, a.Setting(value)),
+			Value:       value,
+			Min:         game.SetupMin,
+			Max:         game.SetupMax,
+			Unlocked:    unlocked,
 		}
 		if !unlocked {
 			row.Requires = fmt.Sprintf("%s — %s tier %d",
@@ -97,35 +109,55 @@ func (s *Store) SetupFor(ctx context.Context, p *Player) SetupView {
 }
 
 // display formats a setting the way it would be written on a setup sheet.
-func display(a game.SetupAxis, notch int) string {
-	v := strconv.FormatFloat(a.Setting(notch), 'f', a.Decimals, 64)
-	if a.Unit == "" {
+func display(a game.SetupAxis, setting float64) string {
+	v := strconv.FormatFloat(setting, 'f', a.Decimals, 64)
+	switch {
+	case a.Unit == "":
 		return v
-	}
-	if a.Unit == "°" {
+	case a.Unit == "°", strings.HasPrefix(a.Unit, "%"):
 		return v + a.Unit
 	}
 	return v + " " + a.Unit
 }
 
-// SetSetup adjusts one axis on the car being driven.
+// SetSetup adjusts one axis on the car being driven, by the real number on the
+// sheet: 87mm of ride height, 2.35 bar, a 4.22 final drive.
 //
 // Free, and as often as you like — the money went on the parts. What the
-// server checks is that the part is actually fitted and that the value is one
-// the workshop could reach, both read from its own tables rather than from the
-// request.
-func (s *Store) SetSetup(ctx context.Context, playerID, axisID string, value int) (*Player, error) {
+// server checks is that the part is actually fitted and that the setting is
+// one the workshop could reach, both read from its own tables rather than from
+// the request. What is stored is the position the model works in, snapped to a
+// whole step, so nothing can persist a car that could not be built.
+func (s *Store) SetSetup(ctx context.Context, playerID, axisID string, setting float64) (*Player, error) {
 	axis, ok := game.AxisByID(axisID)
 	if !ok {
 		return nil, ErrInvalid
 	}
-	if value < game.SetupMin || value > game.SetupMax {
+	if math.IsNaN(setting) || math.IsInf(setting, 0) || !axis.InRange(setting) {
 		return nil, ErrInvalid
 	}
-	col, ok := setupColumn(axisID)
+	return s.writeSetup(ctx, playerID, axis, axis.PositionFor(setting))
+}
+
+// SetSetupPosition adjusts one axis by normalised position instead — the ends
+// of the range without having to know what the ends are in millimetres.
+func (s *Store) SetSetupPosition(ctx context.Context, playerID, axisID string, pos float64) (*Player, error) {
+	axis, ok := game.AxisByID(axisID)
 	if !ok {
 		return nil, ErrInvalid
 	}
+	if math.IsNaN(pos) || math.IsInf(pos, 0) || pos < game.SetupMin || pos > game.SetupMax {
+		return nil, ErrInvalid
+	}
+	return s.writeSetup(ctx, playerID, axis, pos)
+}
+
+func (s *Store) writeSetup(ctx context.Context, playerID string, axis game.SetupAxis, pos float64) (*Player, error) {
+	col, ok := setupColumn(axis.ID)
+	if !ok {
+		return nil, ErrInvalid
+	}
+	value := axis.Quantize(pos)
 
 	var out *Player
 	err := s.tx(ctx, func(tx *sql.Tx) error {

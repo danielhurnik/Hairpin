@@ -22,9 +22,19 @@ import "math"
 // nothing to turn: no coilovers, no adjustable arms, no boost controller.
 // ---------------------------------------------------------------------------
 
+// SetupMin and SetupMax are the ends of every axis, expressed as a normalised
+// position rather than as a unit: -2 is one end of what the workshop can
+// reach, +2 the other, 0 whatever the car left the factory on.
+//
+// The position is an internal coordinate and never leaves the server on its
+// own. Everything a player reads or types is the real number — 87mm, 2.35
+// bar, 4.22 — and SetupAxis.Values below is the calibration between the two.
+// Keeping the model on a normalised axis is what lets one line of physics
+// serve seven adjustments measured in five different units; keeping the
+// player on the real number is what makes precision worth having.
 const (
-	SetupMin = -2
-	SetupMax = 2
+	SetupMin = -2.0
+	SetupMax = 2.0
 )
 
 // setupGain scales the whole sheet at once. It is the single knob that sets
@@ -33,19 +43,41 @@ const (
 // TestPerfectSetupIsWorthAboutFivePercent holds to.
 const setupGain = 2.05
 
+// Setup is one car's sheet, as positions on the axes above.
 type Setup struct {
-	Gearing  int `json:"gearing"`
-	Boost    int `json:"boost"`
-	Pressure int `json:"pressure"`
-	Ride     int `json:"ride_height"`
-	Camber   int `json:"camber"`
-	Damping  int `json:"damping"`
-	Ballast  int `json:"ballast"`
+	Gearing  float64 `json:"gearing"`
+	Boost    float64 `json:"boost"`
+	Pressure float64 `json:"pressure"`
+	Ride     float64 `json:"ride_height"`
+	Camber   float64 `json:"camber"`
+	Damping  float64 `json:"damping"`
+	Ballast  float64 `json:"ballast"`
+}
+
+// IsFactory reports whether this is the car as it left the workshop.
+//
+// A tolerance rather than a comparison against the zero value, because a
+// player who winds an axis back to exactly the factory number arrives there
+// through two floating-point conversions and lands a few parts in a
+// quadrillion off it. That is the factory setting by any measure that matters.
+func (s Setup) IsFactory() bool {
+	for _, a := range SetupAxes {
+		if v, _ := s.Get(a.ID); math.Abs(v) > 1e-9 {
+			return false
+		}
+	}
+	return true
 }
 
 // SetupAxis describes one adjustment: what unlocks it, what it is measured in,
-// and what the ends of the range mean. Values holds the real setting at each
-// notch from SetupMin to SetupMax, so the garage shows 85mm rather than "-1".
+// and what the ends of the range mean.
+//
+// Values is the calibration curve — the real setting at each whole position
+// from SetupMin to SetupMax — and everything between them is interpolated, so
+// the axis is continuous rather than a choice of five. Step is the granularity
+// the workshop actually works to: a millimetre of ride height, a tenth of a
+// degree of camber, one click of damping. Between them they mean the player
+// sets 87mm and the model is handed a position.
 type SetupAxis struct {
 	ID       string `json:"id"`
 	Label    string `json:"label"`
@@ -56,7 +88,11 @@ type SetupAxis struct {
 	Part   string     `json:"part"`
 	Unit   string     `json:"unit"`
 	Values [5]float64 `json:"values"`
-	// Decimals is how precisely to print the value.
+	// Step is the smallest adjustment that can be made, in Unit. Nothing here
+	// is infinitely divisible: a coilover has a thread pitch and a damper has
+	// clicks.
+	Step float64 `json:"step"`
+	// Decimals is how precisely to print the value. Fine enough to show Step.
 	Decimals int    `json:"decimals"`
 	Low      string `json:"low"`
 	High     string `json:"high"`
@@ -71,56 +107,56 @@ type SetupAxis struct {
 var SetupAxes = []SetupAxis{
 	{
 		ID: "gearing", Label: "Final Drive", Category: CatEngine, MinTier: 1,
-		Part: "Intake & Exhaust", Unit: "", Decimals: 2,
+		Part: "Intake & Exhaust", Unit: "", Step: 0.01, Decimals: 2,
 		Values: [5]float64{3.70, 3.90, 4.10, 4.30, 4.50},
 		Low:    "Long", High: "Short",
 		Note: "Short gears fire you out of slow corners and run out of road on a long straight.",
 	},
 	{
 		ID: "boost", Label: "Boost Pressure", Category: CatTurbo, MinTier: 1,
-		Part: "Bolt-On Snail", Unit: "bar", Decimals: 1,
+		Part: "Bolt-On Snail", Unit: "bar", Step: 0.05, Decimals: 2,
 		Values: [5]float64{0.4, 0.6, 0.8, 1.0, 1.2},
 		Low:    "Low", High: "High",
 		Note: "More boost is more everywhere it can reach the ground, and a longer wait for it out of a hairpin.",
 	},
 	{
 		ID: "pressure", Label: "Tyre Pressure", Category: CatTires, MinTier: 1,
-		Part: "Sport Touring", Unit: "bar", Decimals: 1,
+		Part: "Sport Touring", Unit: "bar", Step: 0.05, Decimals: 2,
 		Values: [5]float64{1.8, 2.0, 2.2, 2.4, 2.6},
 		Low:    "Low", High: "High",
 		Note: "Low pressure buys grip now and hands it back once the tyres are hot.",
 	},
 	{
 		ID: "ballast", Label: "Weight Balance", Category: CatWeight, MinTier: 1,
-		Part: "Stripped Boot", Unit: "% front", Decimals: 0,
+		Part: "Stripped Boot", Unit: "% front", Step: 0.5, Decimals: 1,
 		Values: [5]float64{50, 52, 54, 56, 58},
 		Low:    "Rearward", High: "Forward",
 		Note: "Mass forward stops and turns in; mass back puts the power down. Your layout has opinions.",
 	},
 	{
 		ID: "ride_height", Label: "Ride Height", Category: CatSuspension, MinTier: 2,
-		Part: "Adjustable Coilovers", Unit: "mm", Decimals: 0,
+		Part: "Adjustable Coilovers", Unit: "mm", Step: 1, Decimals: 0,
 		Values: [5]float64{130, 115, 100, 85, 70},
 		Low:    "High", High: "Low",
 		Note: "Low is quick where the road is smooth and fast, and grounds out where it is neither.",
 	},
 	{
 		ID: "camber", Label: "Camber", Category: CatSuspension, MinTier: 3,
-		Part: "Pillow-Ball Arms", Unit: "°", Decimals: 1,
+		Part: "Pillow-Ball Arms", Unit: "°", Step: 0.1, Decimals: 1,
 		Values: [5]float64{-0.5, -1.2, -2.0, -2.8, -3.6},
 		Low:    "Conservative", High: "Aggressive",
 		Note: "Lean the wheels in for grip through a long corner. The braking zones will notice.",
 	},
 	{
 		ID: "damping", Label: "Damping", Category: CatSuspension, MinTier: 4,
-		Part: "2-Way Dampers", Unit: "clicks", Decimals: 0,
+		Part: "2-Way Dampers", Unit: "clicks", Step: 1, Decimals: 0,
 		Values: [5]float64{2, 5, 8, 11, 14},
 		Low:    "Soft", High: "Stiff",
 		Note: "Stiff changes direction the instant you ask, and finds every bump you hoped to ignore.",
 	},
 }
 
-func (s Setup) Get(axis string) (int, bool) {
+func (s Setup) Get(axis string) (float64, bool) {
 	switch axis {
 	case "gearing":
 		return s.Gearing, true
@@ -140,7 +176,7 @@ func (s Setup) Get(axis string) (int, bool) {
 	return 0, false
 }
 
-func (s Setup) With(axis string, v int) (Setup, bool) {
+func (s Setup) With(axis string, v float64) (Setup, bool) {
 	switch axis {
 	case "gearing":
 		s.Gearing = v
@@ -171,16 +207,75 @@ func AxisByID(id string) (SetupAxis, bool) {
 	return SetupAxis{}, false
 }
 
-// Setting is the real value at a notch — 85mm, 2.4 bar, 4.30.
-func (a SetupAxis) Setting(notch int) float64 {
-	i := notch - SetupMin
-	if i < 0 {
-		i = 0
+// Setting is the real value at a position — 87mm, 2.35 bar, 4.22 — read off
+// the calibration curve and interpolated between its points.
+func (a SetupAxis) Setting(pos float64) float64 {
+	x := clamp(pos, SetupMin, SetupMax) - SetupMin
+	i := int(math.Floor(x))
+	if i >= len(a.Values)-1 {
+		return a.Values[len(a.Values)-1]
 	}
-	if i >= len(a.Values) {
-		i = len(a.Values) - 1
+	return a.Values[i] + (a.Values[i+1]-a.Values[i])*(x-float64(i))
+}
+
+// SettingLow and SettingHigh are the ends of the range in real units, which is
+// what a player is choosing between. Either may be the larger number: winding
+// a car down is fewer millimetres and more degrees.
+func (a SetupAxis) SettingLow() float64  { return a.Values[0] }
+func (a SetupAxis) SettingHigh() float64 { return a.Values[len(a.Values)-1] }
+
+// Factory is the setting the car left the workshop on.
+func (a SetupAxis) Factory() float64 { return a.Values[(len(a.Values)-1)/2] }
+
+// InRange reports whether a real setting is one this axis can actually reach.
+// The curve is monotonic but can run either way, so the ends are sorted.
+func (a SetupAxis) InRange(setting float64) bool {
+	lo, hi := math.Min(a.SettingLow(), a.SettingHigh()), math.Max(a.SettingLow(), a.SettingHigh())
+	// A step of slack at each end: a setting that quantises back inside the
+	// range is one the workshop can reach, and rejecting 70.4mm when 70mm is
+	// legal would be pedantry rather than validation.
+	return setting >= lo-a.Step/2 && setting <= hi+a.Step/2
+}
+
+// PositionFor is the inverse of Setting: what the model should be handed when
+// a player asks for 87mm. Out-of-range settings clamp to the end of the axis.
+func (a SetupAxis) PositionFor(setting float64) float64 {
+	for i := 0; i+1 < len(a.Values); i++ {
+		v0, v1 := a.Values[i], a.Values[i+1]
+		if v0 == v1 {
+			continue
+		}
+		if setting >= math.Min(v0, v1) && setting <= math.Max(v0, v1) {
+			return SetupMin + float64(i) + (setting-v0)/(v1-v0)
+		}
 	}
-	return a.Values[i]
+	// Off the end of the curve: whichever end it is off.
+	if a.SettingLow() < a.SettingHigh() {
+		if setting < a.SettingLow() {
+			return SetupMin
+		}
+		return SetupMax
+	}
+	if setting > a.SettingLow() {
+		return SetupMin
+	}
+	return SetupMax
+}
+
+// Quantize snaps a position to something the workshop could actually set:
+// whole steps away from the factory setting, and inside the range.
+//
+// Counting from the factory rather than from the bottom of the range is what
+// keeps the untouched car exactly untouched — the alternative lands a
+// nominally factory sheet a rounding error away from zero, and then everything
+// that asks "has this been tuned at all" has to know about floating point.
+func (a SetupAxis) Quantize(pos float64) float64 {
+	pos = clamp(pos, SetupMin, SetupMax)
+	if a.Step <= 0 {
+		return pos
+	}
+	v := a.Factory() + math.Round((a.Setting(pos)-a.Factory())/a.Step)*a.Step
+	return clamp(a.PositionFor(v), SetupMin, SetupMax)
 }
 
 // AxisUnlocked reports whether a car with these tiers has the part fitted.
@@ -189,9 +284,11 @@ func AxisUnlocked(a SetupAxis, tiers UpgradeTiers) bool {
 	return ok && tier >= a.MinTier
 }
 
-// LegalSetup strips any axis the car has no part for, and pulls anything out
-// of range back into it. Applied on the way in and again on the way out, so a
-// tier that no longer covers an axis cannot leave a live adjustment behind.
+// LegalSetup strips any axis the car has no part for, pulls anything out of
+// range back into it, and snaps what is left to a setting the workshop could
+// have reached. Applied on the way in and again on the way out, so a tier that
+// no longer covers an axis cannot leave a live adjustment behind, and no
+// stored value can describe a car that could not exist.
 func LegalSetup(s Setup, tiers UpgradeTiers) Setup {
 	out := Setup{}
 	for _, a := range SetupAxes {
@@ -199,13 +296,10 @@ func LegalSetup(s Setup, tiers UpgradeTiers) Setup {
 			continue
 		}
 		v, _ := s.Get(a.ID)
-		if v < SetupMin {
-			v = SetupMin
+		if math.IsNaN(v) || math.IsInf(v, 0) {
+			v = 0
 		}
-		if v > SetupMax {
-			v = SetupMax
-		}
-		out, _ = out.With(a.ID, v)
+		out, _ = out.With(a.ID, a.Quantize(v))
 	}
 	return out
 }
@@ -302,7 +396,7 @@ func heat(seg Segment, progress float64) float64 {
 // divides out whatever it was worth on average to this car.
 func setupModRaw(b Build, seg Segment, progress float64) float64 {
 	s := b.Setup
-	if s == (Setup{}) {
+	if s.IsFactory() {
 		return 1
 	}
 	mod := 1.0
@@ -322,7 +416,7 @@ func setupModRaw(b Build, seg Segment, progress float64) float64 {
 
 	// --- Final drive: exit versus terminal speed -------------------------
 	if s.Gearing != 0 {
-		short := float64(s.Gearing) / 2 // +1 shortest, -1 longest
+		short := s.Gearing / 2 // +1 shortest, -1 longest
 		// A car with power to spare pulls long gears happily and gains little
 		// from short ones; an underpowered car lives on the short end.
 		pull := clamp(1.45-0.55*power, 0.35, 1.45)
@@ -332,7 +426,7 @@ func setupModRaw(b Build, seg Segment, progress float64) float64 {
 
 	// --- Boost: power where it lands, lag where it does not ---------------
 	if s.Boost != 0 {
-		bo := float64(s.Boost) / 2
+		bo := s.Boost / 2
 		// A big single is all boost and all lag; a small bolt-on barely
 		// notices the controller either way.
 		snail := clamp(b.Car.TurboLag/0.012, 0.25, 1.6)
@@ -344,7 +438,7 @@ func setupModRaw(b Build, seg Segment, progress float64) float64 {
 
 	// --- Tyre pressure: grip now against grip later -----------------------
 	if s.Pressure != 0 {
-		soft := -float64(s.Pressure) / 2 // low pressure is the soft end
+		soft := -s.Pressure / 2 // low pressure is the soft end
 		// Soft is worth far more when there is no grip to begin with.
 		mod += setupGain * (0.030*soft*loaded(seg)*(1+0.75*slick) - 0.026*soft*openRoad(seg))
 		if soft > 0 {
@@ -363,7 +457,7 @@ func setupModRaw(b Build, seg Segment, progress float64) float64 {
 	// else — a scale factor could never express that, and while ballast was
 	// only scaled, every layout wanted the identical sheet.
 	if s.Ballast != 0 {
-		fwd := float64(s.Ballast) / 2
+		fwd := s.Ballast / 2
 		mod += setupGain * ballastLayout(b.Car.Drivetrain) *
 			(0.032*fwd*stopping(seg) - 0.030*fwd*crawling(seg)*tractionAxle(b.Car.Drivetrain))
 	}
@@ -386,7 +480,7 @@ func setupModRaw(b Build, seg Segment, progress float64) float64 {
 
 	// --- Camber: sustained load against everything longitudinal -----------
 	if s.Camber != 0 {
-		agg := float64(s.Camber) / 2
+		agg := s.Camber / 2
 		// Diminishing returns: a car already on a lot of grip has less to
 		// find by leaning the wheels over, and more to lose under braking.
 		// Diminishing returns with grip, and in the wet the tyre wants to be
@@ -398,7 +492,7 @@ func setupModRaw(b Build, seg Segment, progress float64) float64 {
 
 	// --- Damping: direction change against compliance ---------------------
 	if s.Damping != 0 {
-		stiff := float64(s.Damping) / 2
+		stiff := s.Damping / 2
 		// Stiff dampers work with a car that has the grip to use them and
 		// punish a heavy one that needs the travel.
 		mod += setupGain * (0.034*stiff*transitions(seg)*clamp(grip, 0.7, 1.4) -
@@ -462,7 +556,7 @@ func tractionAxle(dt Drivetrain) float64 {
 // costs one pass over the six passes per build, once per race rather than once
 // per corner.
 func setupNormFor(car CarStats, driver DriverStats, s Setup) float64 {
-	if s == (Setup{}) {
+	if s.IsFactory() {
 		return 1
 	}
 	bare := Build{Car: car, Driver: driver}
@@ -534,19 +628,19 @@ type SetupVariance struct {
 func setupVariance(s Setup) SetupVariance {
 	v := SetupVariance{SigmaMult: 1, MistakeMult: 1}
 
-	v.SigmaMult += float64(s.Boost) * 0.100
-	v.MistakeMult += float64(s.Boost) * 0.015
+	v.SigmaMult += s.Boost * 0.100
+	v.MistakeMult += s.Boost * 0.015
 
-	v.SigmaMult += float64(s.Camber) * 0.030
-	v.MistakeMult += float64(s.Camber) * 0.030
+	v.SigmaMult += s.Camber * 0.030
+	v.MistakeMult += s.Camber * 0.030
 
-	v.SigmaMult += float64(s.Damping) * 0.060
-	v.MistakeMult += float64(s.Damping) * 0.010
+	v.SigmaMult += s.Damping * 0.060
+	v.MistakeMult += s.Damping * 0.010
 
-	v.SigmaMult -= float64(s.Pressure) * 0.025
+	v.SigmaMult -= s.Pressure * 0.025
 
 	// A car on the floor has no travel left to absorb a mistake.
-	v.MistakeMult += float64(s.Ride) * 0.020
+	v.MistakeMult += s.Ride * 0.020
 
 	v.SigmaMult = clamp(v.SigmaMult, 0.75, 1.45)
 	v.MistakeMult = clamp(v.MistakeMult, 0.80, 1.40)
@@ -578,11 +672,11 @@ const (
 // piece of road away from a repair bill.
 func crashAggression(s Setup) float64 {
 	a := 1.0
-	a += 0.42 * clamp(float64(s.Ride)/2, 0, 1)      // slammed
-	a += 0.34 * clamp(float64(s.Damping)/2, 0, 1)   // no compliance
-	a += 0.30 * clamp(float64(s.Camber)/2, 0, 1)    // on the edge of the tyre
-	a += 0.26 * clamp(float64(s.Boost)/2, 0, 1)     // sudden delivery
-	a += 0.18 * clamp(-float64(s.Pressure)/2, 0, 1) // soft and squirming
+	a += 0.42 * clamp(s.Ride/2, 0, 1)      // slammed
+	a += 0.34 * clamp(s.Damping/2, 0, 1)   // no compliance
+	a += 0.30 * clamp(s.Camber/2, 0, 1)    // on the edge of the tyre
+	a += 0.26 * clamp(s.Boost/2, 0, 1)     // sudden delivery
+	a += 0.18 * clamp(-s.Pressure/2, 0, 1) // soft and squirming
 	return clamp(a, 1, CrashAggressionCap)
 }
 
@@ -659,7 +753,7 @@ type SetupNote struct {
 // is which way to turn the spanner.
 func SetupFeedback(b Build, t TrackDef) []SetupNote {
 	s := b.Setup
-	if s == (Setup{}) {
+	if s.IsFactory() {
 		return nil
 	}
 	var notes []SetupNote
@@ -682,32 +776,32 @@ func SetupFeedback(b Build, t TrackDef) []SetupNote {
 		if s.Damping > 0 && rough(seg) > 0.5 {
 			notes = append(notes, SetupNote{seg.Name,
 				"The car skated over the broken surface in " + seg.Name + " instead of settling.",
-				0.032 * float64(s.Damping) / 2 * rough(seg) * heavy})
+				0.032 * s.Damping / 2 * rough(seg) * heavy})
 		}
 		if s.Camber > 0 && stopping(seg) > 0.55 {
 			notes = append(notes, SetupNote{seg.Name,
 				"Not enough tyre on the road under braking for " + seg.Name + ".",
-				0.036 * float64(s.Camber) / 2 * stopping(seg) * (1 + 0.5*slick)})
+				0.036 * s.Camber / 2 * stopping(seg) * (1 + 0.5*slick)})
 		}
 		if s.Boost > 0 && crawling(seg) > 0.5 {
 			notes = append(notes, SetupNote{seg.Name,
 				"You waited for the turbo on the way out of " + seg.Name + ".",
-				0.028 * float64(s.Boost) / 2 * crawling(seg) * (1 + 1.1*slick)})
+				0.028 * s.Boost / 2 * crawling(seg) * (1 + 1.1*slick)})
 		}
 		if s.Pressure < 0 && heat(seg, progress) > 0.45 {
 			notes = append(notes, SetupNote{seg.Name,
 				"The tyres were long gone by " + seg.Name + ".",
-				0.030 * -float64(s.Pressure) / 2 * heat(seg, progress) * heavy * (1 - 0.8*slick)})
+				0.030 * -s.Pressure / 2 * heat(seg, progress) * heavy * (1 - 0.8*slick)})
 		}
 		if s.Gearing > 0 && nearLimiter(seg) > 0.5 {
 			notes = append(notes, SetupNote{seg.Name,
 				"Bouncing off the limiter down " + seg.Name + ".",
-				0.030 * float64(s.Gearing) / 2 * nearLimiter(seg)})
+				0.030 * s.Gearing / 2 * nearLimiter(seg)})
 		}
 		if s.Gearing < 0 && crawling(seg) > 0.55 {
 			notes = append(notes, SetupNote{seg.Name,
 				"Nothing there off the corner in " + seg.Name + ".",
-				0.034 * -float64(s.Gearing) / 2 * crawling(seg)})
+				0.034 * -s.Gearing / 2 * crawling(seg)})
 		}
 	}
 

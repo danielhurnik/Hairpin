@@ -99,9 +99,9 @@ func TestSetupMattersOnASpecificTrack(t *testing.T) {
 // test rather than as an intention.
 func TestNoAxisHasAUniversallyCorrectSetting(t *testing.T) {
 	for _, a := range SetupAxes {
-		best := map[int]int{}
+		best := map[float64]int{}
 		for _, track := range Tracks {
-			bestV, bestScore := 0, math.Inf(-1)
+			bestV, bestScore := 0.0, math.Inf(-1)
 			for v := SetupMin; v <= SetupMax; v++ {
 				b := referenceBuild()
 				sv, _ := Setup{}.With(a.ID, v)
@@ -151,14 +151,14 @@ func TestSetupAxesAreGatedByParts(t *testing.T) {
 func TestLegalSetupStripsUnfittedParts(t *testing.T) {
 	wound := Setup{Gearing: 2, Boost: 2, Pressure: 2, Ride: 2, Camber: 2, Damping: 2, Ballast: 2}
 
-	if got := LegalSetup(wound, UpgradeTiers{}); got != (Setup{}) {
+	if got := LegalSetup(wound, UpgradeTiers{}); !got.IsFactory() {
 		t.Errorf("stock car kept adjustments %+v", got)
 	}
 
 	// Coilovers but no arms and no dampers: ride height only.
 	partial := LegalSetup(wound, UpgradeTiers{Suspension: 2})
 	if partial.Ride != 2 {
-		t.Errorf("ride height should be adjustable on coilovers, got %d", partial.Ride)
+		t.Errorf("ride height should be adjustable on coilovers, got %v", partial.Ride)
 	}
 	if partial.Camber != 0 || partial.Damping != 0 {
 		t.Errorf("camber/damping adjustable without the parts: %+v", partial)
@@ -166,10 +166,56 @@ func TestLegalSetupStripsUnfittedParts(t *testing.T) {
 
 	// Out-of-range values are pulled back rather than trusted.
 	if got := LegalSetup(Setup{Gearing: 99}, allTiers(MaxTier)); got.Gearing != SetupMax {
-		t.Errorf("gearing 99 survived as %d, want clamped to %d", got.Gearing, SetupMax)
+		t.Errorf("gearing 99 survived as %v, want clamped to %v", got.Gearing, SetupMax)
 	}
 	if got := LegalSetup(Setup{Gearing: -99}, allTiers(MaxTier)); got.Gearing != SetupMin {
-		t.Errorf("gearing -99 survived as %d, want clamped to %d", got.Gearing, SetupMin)
+		t.Errorf("gearing -99 survived as %v, want clamped to %v", got.Gearing, SetupMin)
+	}
+	// Nothing finer than the workshop's own precision survives either: an axis
+	// is continuous, not infinitely divisible.
+	fine := LegalSetup(Setup{Ride: 0.5137}, allTiers(MaxTier))
+	ride, _ := AxisByID("ride_height")
+	if got := ride.Setting(fine.Ride); got != math.Round(got) {
+		t.Errorf("a ride height of %vmm survived; the collar moves in millimetres", got)
+	}
+	// And a sheet nobody has touched stays untouched through the round trip.
+	if !LegalSetup(Setup{}, allTiers(MaxTier)).IsFactory() {
+		t.Error("a factory sheet came back tuned")
+	}
+}
+
+// The axes are physical: a position converts to a real number and back without
+// drifting, which is what lets a player type 87 and get 87.
+func TestAxisConvertsBothWays(t *testing.T) {
+	for _, a := range SetupAxes {
+		if a.Step <= 0 {
+			t.Errorf("axis %q has no step — it cannot say how finely it adjusts", a.ID)
+			continue
+		}
+		if a.Setting(0) != a.Factory() {
+			t.Errorf("axis %q reads %v at the factory position, want %v", a.ID, a.Setting(0), a.Factory())
+		}
+		// Walk the whole range in single steps.
+		lo, hi := math.Min(a.SettingLow(), a.SettingHigh()), math.Max(a.SettingLow(), a.SettingHigh())
+		for v := lo; v <= hi+1e-9; v += a.Step {
+			pos := a.PositionFor(v)
+			if pos < SetupMin || pos > SetupMax {
+				t.Fatalf("axis %q put %v at position %v", a.ID, v, pos)
+			}
+			if got := a.Setting(pos); math.Abs(got-v) > a.Step/100 {
+				t.Errorf("axis %q: %v became %v on the way round", a.ID, v, got)
+			}
+			if got := a.Setting(a.Quantize(pos)); math.Abs(got-v) > a.Step/2 {
+				t.Errorf("axis %q: quantising %v moved it to %v", a.ID, v, got)
+			}
+		}
+		// Off both ends, clamped rather than extrapolated.
+		if a.Setting(a.PositionFor(hi+1000)) != a.SettingHigh() && a.Setting(a.PositionFor(hi+1000)) != a.SettingLow() {
+			t.Errorf("axis %q extrapolated past the end of its range", a.ID)
+		}
+		if a.InRange(hi + 10*a.Step) {
+			t.Errorf("axis %q accepts %v, which is off the sheet", a.ID, hi+10*a.Step)
+		}
 	}
 }
 
@@ -271,25 +317,37 @@ func TestNextTrackReachesEveryTrack(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // bestSetupFor hill-climbs the sheet for a track, one axis at a time, which is
-// what a determined player does by hand. Coordinate ascent rather than the
-// full 5^7 cross product: it lands on the same answer for a model this smooth
-// and is fast enough to run in a test.
+// what a determined player does by hand. Coordinate ascent rather than the full
+// cross product: it lands on the same answer for a model this smooth and is
+// fast enough to run in a test.
+//
+// It sweeps each axis coarsely and then refines, because the axes are
+// continuous now — searching the five old notches would flatter the model by
+// measuring only the settings it used to allow, and the player with a text box
+// is not so restricted.
 func bestSetupFor(b Build, t TrackDef) Setup {
 	best := Setup{}
 	bestScore := TrackRating(WithSetup(b, best), t)
-	for pass := 0; pass < 4; pass++ {
-		improved := false
-		for _, a := range SetupAxes {
-			for v := SetupMin; v <= SetupMax; v++ {
-				cand, _ := best.With(a.ID, v)
-				if s := TrackRating(WithSetup(b, cand), t); s > bestScore+1e-9 {
-					best, bestScore = cand, s
-					improved = true
+	for _, step := range []float64{0.25, 0.05} {
+		for pass := 0; pass < 4; pass++ {
+			improved := false
+			for _, a := range SetupAxes {
+				at, _ := best.Get(a.ID)
+				lo, hi := SetupMin, SetupMax
+				if step < 0.25 {
+					lo, hi = math.Max(SetupMin, at-0.25), math.Min(SetupMax, at+0.25)
+				}
+				for v := lo; v <= hi+1e-9; v += step {
+					cand, _ := best.With(a.ID, a.Quantize(v))
+					if s := TrackRating(WithSetup(b, cand), t); s > bestScore+1e-9 {
+						best, bestScore = cand, s
+						improved = true
+					}
 				}
 			}
-		}
-		if !improved {
-			break
+			if !improved {
+				break
+			}
 		}
 	}
 	return best
@@ -390,14 +448,14 @@ func TestTheBestSetupDependsOnTheCar(t *testing.T) {
 	// the driven wheels is traction, so a front-driven car wants the opposite
 	// of a rear-driven one.
 	akina, _ := TrackByID("akina_down")
-	ballast := map[Drivetrain]int{}
+	ballast := map[Drivetrain]float64{}
 	for _, dt := range layouts {
 		b := referenceBuild()
 		b.Car.Drivetrain = dt
 		ballast[dt] = bestSetupFor(b, akina).Ballast
 	}
 	if ballast[FF] <= 0 || ballast[FR] >= 0 {
-		t.Errorf("on Akina front-drive wants %+d and rear-drive %+d; the driven axle should split them",
+		t.Errorf("on Akina front-drive wants %+.2f and rear-drive %+.2f; the driven axle should split them",
 			ballast[FF], ballast[FR])
 	}
 

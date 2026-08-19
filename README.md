@@ -496,7 +496,7 @@ POST /v1/cars/buy           { chassis_id }
 POST /v1/cars/equip         { chassis_id }
 
 GET  /v1/setup
-POST /v1/setup              { axis, value }
+POST /v1/setup              { axis, setting } | { axis, value }
 POST /v1/setup/reset
 
 GET  /v1/inventory
