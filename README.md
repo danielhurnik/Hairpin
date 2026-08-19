@@ -115,8 +115,9 @@ EXPO_PUBLIC_API_URL=http://192.168.1.42:8080 npx expo start
 
 ### Smoke test
 
-`scripts/smoke.py` drives the whole loop over HTTP against a running server and
-prints a race, sector by sector:
+`scripts/smoke.py` drives the whole loop over HTTP against a running server —
+job, garage, setup sheet, race, ladder, shop — printing the road it drew, the
+sheet it set on the car, and the race sector by sector:
 
 ```bash
 HAIRPIN_TIME_SCALE=60 go run ./cmd/hairpin &

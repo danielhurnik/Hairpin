@@ -66,6 +66,38 @@ print("  -> bought tires: paid $%d, rating %.2f -> %.2f" % (r["paid"], g["rating
 code, r = call("POST", "/v1/garage/upgrade", {"category": "tires", "cash": 99999999})
 print("  -> injected 'cash' field rejected: %s (%d)" % (r.get("error"), code))
 
+print("\n=== setup ===")
+_, sheet = call("GET", "/v1/setup")
+sv, track, cond = sheet["setup"], sheet["setup"]["track"], sheet["setup"]["conditions"]
+corners = [s for s in track["segments"] if s.get("radius_m")]
+descent = sum(-s["gradient_pct"] / 100 * s["length_m"]
+              for s in track["segments"] if s["gradient_pct"] < 0)
+print("  tonight: %s (%s)" % (track["name"], track["source"]))
+print("  %.2fkm, %d corners, tightest R%.0f, %.0fm of descent"
+      % (sum(s["length_m"] for s in track["segments"]) / 1000, len(corners),
+         min((s["radius_m"] for s in corners), default=0), descent))
+print("  conditions: %s — %s (%.0f%% damp, %.0f°C)"
+      % (cond["label"], cond["note"], cond["damp"] * 100, cond["temp_c"]))
+for a in sv["axes"]:
+    if a["unlocked"]:
+        print("  %-16s %-12s %s .. %s in steps of %s"
+              % (a["label"], a["display"], a["setting_low"], a["setting_high"], a["step"]))
+    else:
+        print("  %-16s %-12s %s" % (a["label"], "LOCKED", a["requires"]))
+
+# The sheet is set in the units on the car, to any value the workshop can
+# reach — not to one of five positions.
+tyres = next((a for a in sv["axes"] if a["id"] == "pressure" and a["unlocked"]), None)
+if tyres:
+    want = round((tyres["factory"] + tyres["setting_high"]) / 2 / tyres["step"]) * tyres["step"]
+    code, r = call("POST", "/v1/setup", {"axis": "pressure", "setting": want})
+    got = next(a for a in r["setup"]["axes"] if a["id"] == "pressure")
+    print("  -> asked for %.2f bar, sheet reads %s" % (want, got["display"]))
+    code, r = call("POST", "/v1/setup", {"axis": "pressure", "setting": 9.9})
+    print("  -> a pressure no tyre would take rejected: %s (%d)" % (r.get("error"), code))
+    code, r = call("POST", "/v1/setup", {"axis": "pressure", "setting": want, "rating": 999})
+    print("  -> injected 'rating' field rejected: %s (%d)" % (r.get("error"), code))
+
 print("\n=== race ===")
 _, o = call("GET", "/v1/race/opponent")
 op = o["opponent"]
@@ -98,6 +130,13 @@ print("  reward: +$%d, +%d xp | rank %d -> %d | free races left %d"
 if race.get("drop"):
     print("  DROP: %s (%s, quality %.2f)"
           % (race["drop"]["name"], race["drop"]["rarity"], race["drop"]["quality"]))
+if race.get("crashed"):
+    print("  CRASHED at %s — repairs cost $%d"
+          % (rep.get("crash_segment", "?"), race.get("repair_cost", 0)))
+# What the sheet cost, which is the only feedback the game gives on a setup and
+# arrives after the run rather than before it.
+for note in race.get("setup_notes") or []:
+    print("  note: %s" % note["text"])
 
 print("\n=== ladder (top 8) ===")
 _, l = call("GET", "/v1/ladder?from=1&limit=8")
