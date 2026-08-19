@@ -356,26 +356,45 @@ func bestSetupFor(b Build, t TrackDef) Setup {
 // The headline number for the whole feature: getting the car right for the
 // road should be worth about a ladder rung, and no more. Too little and the
 // spanner is decoration; too much and the garage stops mattering.
+//
+// And it has to be worth about the same everywhere. A pass that pays twice
+// what the others pay is the pass everyone tunes for and nobody tunes on the
+// rest — Happogahara used to pay 7.8% against a 3.5% floor, which is two
+// different games depending on which road came up.
 func TestPerfectSetupIsWorthAboutFivePercent(t *testing.T) {
 	base := referenceBuild()
 	var sum float64
+	low, high := math.Inf(1), math.Inf(-1)
+	lowName, highName := "", ""
 	for _, track := range Tracks {
 		factory := TrackRating(WithSetup(base, Setup{}), track)
 		tuned := TrackRating(WithSetup(base, bestSetupFor(base, track)), track)
 		gain := tuned/factory - 1
 		sum += gain
 		t.Logf("%-28s perfect setup worth %+.2f%%", track.Name, gain*100)
-		if gain < 0.02 {
+		if gain < 0.03 {
 			t.Errorf("%s: a perfect setup is worth only %+.2f%% — not worth the screen", track.Name, gain*100)
 		}
-		if gain > 0.09 {
+		if gain > 0.07 {
 			t.Errorf("%s: a perfect setup is worth %+.2f%% — the sheet outweighs the build", track.Name, gain*100)
 		}
+		if gain < low {
+			low, lowName = gain, track.Name
+		}
+		if gain > high {
+			high, highName = gain, track.Name
+		}
 	}
-	if avg := sum / float64(len(Tracks)); avg < 0.035 || avg > 0.065 {
+	if avg := sum / float64(len(Tracks)); avg < 0.04 || avg > 0.06 {
 		t.Errorf("a perfect setup averages %+.2f%% across the game, want about 5%%", avg*100)
 	} else {
 		t.Logf("average across the game: %+.2f%%", avg*100)
+	}
+	if spread := high / low; spread > 1.6 {
+		t.Errorf("%s pays %.2f%% and %s pays %.2f%% — %.2fx, so only one of them is really a tuning screen",
+			highName, high*100, lowName, low*100, spread)
+	} else {
+		t.Logf("most setup-sensitive pass pays %.2fx the least (%s vs %s)", spread, highName, lowName)
 	}
 }
 
@@ -421,32 +440,42 @@ func TestASetupForOnePassIsWrongOnAnother(t *testing.T) {
 func TestTheBestSetupDependsOnTheCar(t *testing.T) {
 	layouts := []Drivetrain{FR, FF, MR, AWD}
 
-	// Not every road has to discriminate. A steep descent is dominated by
-	// braking, and on those every layout genuinely does want mass forward —
-	// that is the physics being right, not the model being lazy. What matters
-	// is that enough of the game disagrees that no single sheet per pass can
-	// be published and trusted.
-	disagreeing := 0
+	// Every road has to care which end drives, and weight balance is the axis
+	// that carries it: mass over the driven wheels is traction, so on any
+	// given pass at least one layout has to want its mass forward and at least
+	// one has to want it back.
+	//
+	// Three of the six used to fail this. A descent was modelled as a braking
+	// problem and nothing else, so every layout wanted its mass forward for
+	// the same reason and half the game had one right answer. What was missing
+	// is that gravity unloads the rear of a car going down and the front of
+	// one going up, which is precisely when the driven axle should have the
+	// loudest opinion — see drivenAxleGrip.
+	blind := []string{}
 	for _, track := range Tracks {
-		distinct := map[Setup]bool{}
+		forward, back := []Drivetrain{}, []Drivetrain{}
 		for _, dt := range layouts {
 			b := referenceBuild()
 			b.Car.Drivetrain = dt
-			distinct[bestSetupFor(b, track)] = true
+			switch bal := bestSetupFor(b, track).Ballast; {
+			case bal > 0:
+				forward = append(forward, dt)
+			case bal < 0:
+				back = append(back, dt)
+			}
 		}
-		if len(distinct) > 1 {
-			disagreeing++
+		if len(forward) == 0 || len(back) == 0 {
+			blind = append(blind, track.Name)
+			continue
 		}
+		t.Logf("%-28s forward %v   back %v", track.Name, forward, back)
 	}
-	if disagreeing < len(Tracks)/3 {
-		t.Errorf("layouts want the same sheet on all but %d of %d passes",
-			disagreeing, len(Tracks))
+	if len(blind) > 0 {
+		t.Errorf("every layout wants the mass in the same place on %v — those roads do not care what you drive", blind)
 	}
-	t.Logf("layouts disagree on %d of %d passes", disagreeing, len(Tracks))
 
-	// Where they do disagree, weight balance is the axis that flips: mass over
-	// the driven wheels is traction, so a front-driven car wants the opposite
-	// of a rear-driven one.
+	// On Akina in particular, the five hairpin exits are traction, so the
+	// front-driven car is the one that wants the weight over its driven axle.
 	akina, _ := TrackByID("akina_down")
 	ballast := map[Drivetrain]float64{}
 	for _, dt := range layouts {

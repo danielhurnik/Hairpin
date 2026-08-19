@@ -41,7 +41,7 @@ const (
 // how much a perfect setup is worth against a factory one — the design target
 // is about 5%, i.e. roughly a ladder rung, which
 // TestPerfectSetupIsWorthAboutFivePercent holds to.
-const setupGain = 2.05
+const setupGain = 2.25
 
 // Setup is one car's sheet, as positions on the axes above.
 type Setup struct {
@@ -351,14 +351,30 @@ func crawling(seg Segment) float64 {
 	return clamp((23-seg.ExitSpeed)/15, 0, 1)
 }
 
-// stopping is how much speed this piece of road takes away, plus what gravity
-// is doing to the brakes.
+// stopping is how much of this piece of road is spent hauling the car down,
+// with gravity's thumb on the scale.
+//
+// Gradient multiplies the braking rather than being braking. An earlier
+// version added a flat term for any downhill, which made a 380-metre descent
+// where the car is accelerating the whole way read as a braking zone — and
+// since a steep pass is mostly that, every descent came out braking-dominated
+// and every layout wanted its mass forward. Nothing was on the brakes; the
+// road was merely pointing down.
+//
+// What is true is that a corner on a steep descent is on the brakes even when
+// it sheds no speed, because holding a speed downhill is braking too. That
+// part is kept, and only for corners.
 func stopping(seg Segment) float64 {
 	var s float64
 	if seg.EntrySpeed > 1 && seg.ExitSpeed < seg.EntrySpeed {
 		s = clamp((seg.EntrySpeed-seg.ExitSpeed)/seg.EntrySpeed/0.42, 0, 1)
 	}
-	return clamp(s+0.45*clamp(-seg.Gradient/10, 0, 1), 0, 1.2)
+	down := clamp(-seg.Gradient/10, 0, 1)
+	s *= 1 + 0.55*down
+	if seg.Radius > 0 {
+		s += 0.30 * down
+	}
+	return clamp(s, 0, 1.2)
 }
 
 // transitions is direction-change work: a rhythm section asks the car to move
@@ -458,8 +474,10 @@ func setupModRaw(b Build, seg Segment, progress float64) float64 {
 	// only scaled, every layout wanted the identical sheet.
 	if s.Ballast != 0 {
 		fwd := s.Ballast / 2
-		mod += setupGain * ballastLayout(b.Car.Drivetrain) *
-			(0.032*fwd*stopping(seg) - 0.030*fwd*crawling(seg)*tractionAxle(b.Car.Drivetrain))
+		dt := b.Car.Drivetrain
+		mod += setupGain * ballastLayout(dt) *
+			(0.032*fwd*stopping(seg)*(1-transferSaturation*alreadyForward(seg)) -
+				0.030*fwd*crawling(seg)*tractionAxle(dt)*drivenAxleGrip(seg, dt))
 	}
 
 	// --- Ride height: millimetres against how far the road moves ----------
@@ -512,6 +530,59 @@ func groundingFactor(seg Segment) float64 {
 	}
 	// Loading the car in a corner uses travel that is then not available.
 	return f + 0.35*loaded(seg)
+}
+
+// alreadyForward is how much of the car's weight the road itself has thrown
+// onto the front axle.
+//
+// Ballast and gravity do the same job, and they do not add up twice. Braking
+// into a corner on a one-in-ten descent has already loaded the front to the
+// point where the tyre is the limit rather than the load, so the next kilo
+// moved forward buys progressively less stopping power — and takes it off a
+// rear axle that is light exactly when it can least afford to be. That is why
+// a descent is not simply a road that wants all the mass forward: the steeper
+// it is, the more the argument has already been settled without the spanner.
+const transferSaturation = 0.40
+
+func alreadyForward(seg Segment) float64 {
+	return clamp(-seg.Gradient/12, 0, 1)
+}
+
+// drivenAxleGrip is how much the driven wheels are relying on where the mass
+// has been put, given what the road has already done to them.
+//
+// Gravity unloads the rear of a car going down a mountain and the front of one
+// going up it. Take mass off an axle that is already light and it spins; take
+// it off one that gravity is pressing into the road and it barely notices. So
+// the same kilo is worth more or less depending on which way the road points
+// and which end drives — a rear-driven car feels the descent, a front-driven
+// one feels the climb.
+//
+// This is the interaction that was missing while half the passes were
+// layout-blind. Without it a descent is only a braking problem, every layout
+// wants its mass forward for the same reason, and the driven axle never gets a
+// vote on the roads where it should have the loudest one.
+const axleSlopeGain = 0.55
+
+func drivenAxleGrip(seg Segment, dt Drivetrain) float64 {
+	var rearDriven float64
+	switch dt {
+	case FF:
+		// Half of what a rear-driven car feels, and for a reason rather than
+		// for symmetry: traction matters at the exit, and there the car's own
+		// acceleration is transferring load off the front again — cancelling
+		// part of what the slope just handed it.
+		rearDriven = -0.5
+	case FR:
+		rearDriven = 1
+	case MR:
+		rearDriven = 1.15
+	case AWD:
+		rearDriven = 0.15
+	}
+	// Positive downhill, negative up.
+	slope := clamp(-seg.Gradient/12, -1, 1)
+	return clamp(1+axleSlopeGain*rearDriven*slope, 0.4, 1.8)
 }
 
 // ballastLayout scales weight transfer by where the engine already is.

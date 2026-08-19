@@ -251,18 +251,22 @@ var authoredTracks = []TrackDef{
 		Source:    SourceAuthored,
 		RealWorld: "Mt. Haruna — the prefectural road down the east face from Lake Haruna towards Takasaki, Gunma. \"Akina\" is the name the manga gave it.",
 		Segments: []Segment{
-			{Name: "Start Line Chute", Length: 260, Width: 7.0, Gradient: -6, Surface: SurfaceSmooth},
+			// The five in a row are the road, so they get most of it. An
+			// earlier version spent 900 of its 1550 metres on three straights,
+			// which made the pass a power road with some hairpins attached and
+			// left it asking for much the same setup as every other descent.
+			{Name: "Start Line Chute", Length: 200, Width: 7.0, Gradient: -6, Surface: SurfaceSmooth},
 			{Name: "First Right", Radius: 95, Length: 120, Width: 6.8, Banking: 2.0, Gradient: -6, Surface: SurfaceSmooth, Dir: 1},
 			{Name: "Consecutive Hairpin 1", Radius: 16, Length: 62, Width: 6.2, Banking: -1.0, Gradient: -9, Surface: SurfaceCoarse, Dir: -1},
 			{Name: "Consecutive Hairpin 2", Radius: 15, Length: 58, Width: 6.0, Banking: -1.5, Gradient: -9, Surface: SurfaceCoarse, Dir: 1},
-			{Name: "Consecutive Hairpin 3", Radius: 14, Length: 56, Width: 5.8, Banking: -2.0, Gradient: -10, Surface: SurfaceCoarse, Dir: -1},
-			{Name: "Consecutive Hairpin 4", Radius: 15, Length: 58, Width: 5.8, Banking: -1.5, Gradient: -10, Surface: SurfacePatched, Dir: 1},
-			{Name: "Consecutive Hairpin 5", Radius: 13, Length: 54, Width: 5.6, Banking: -2.5, Gradient: -10, Surface: SurfacePatched, Dir: -1},
-			{Name: "Downhill Straight", Length: 340, Width: 7.2, Gradient: -8, Surface: SurfaceSmooth, Crest: true},
+			{Name: "Consecutive Hairpin 3", Radius: 14, Length: 56, Width: 5.8, Banking: -2.0, Gradient: -9, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Consecutive Hairpin 4", Radius: 15, Length: 58, Width: 5.8, Banking: -1.5, Gradient: -9, Surface: SurfacePatched, Dir: 1},
+			{Name: "Consecutive Hairpin 5", Radius: 13, Length: 54, Width: 5.6, Banking: -2.5, Gradient: -9, Surface: SurfacePatched, Dir: -1},
+			{Name: "Downhill Straight", Length: 250, Width: 7.2, Gradient: -7, Surface: SurfaceSmooth, Crest: true},
 			{Name: "Blind Left", Radius: 44, Length: 95, Width: 6.4, Banking: -1.0, Gradient: -7, Surface: SurfaceSmooth, Blind: true, Dir: -1},
-			{Name: "The Gutter Corner", Radius: 22, Length: 70, Width: 5.4, Banking: -3.5, Gradient: -8, Surface: SurfaceBroken, Blind: true, Dir: 1},
+			{Name: "The Gutter Corner", Radius: 22, Length: 70, Width: 5.4, Banking: -3.5, Gradient: -7, Surface: SurfaceBroken, Blind: true, Dir: 1},
 			{Name: "Final Braking Zone", Radius: 34, Length: 80, Width: 6.6, Banking: 1.0, Gradient: -5, Surface: SurfaceCoarse, Dir: -1},
-			{Name: "Run to the Line", Length: 300, Width: 7.4, Gradient: -3, Surface: SurfaceSmooth},
+			{Name: "Run to the Line", Length: 230, Width: 7.4, Gradient: -3, Surface: SurfaceSmooth},
 		},
 	},
 	{
@@ -271,16 +275,16 @@ var authoredTracks = []TrackDef{
 		Source:    SourceAuthored,
 		RealWorld: "Mt. Myogi — the climb on the Gunma side, tight and low-speed with almost no run-off.",
 		Segments: []Segment{
-			{Name: "Launch", Length: 200, Width: 6.6, Gradient: 5, Surface: SurfaceCoarse},
-			{Name: "Tight Right", Radius: 19, Length: 60, Width: 5.8, Banking: 1.0, Gradient: 7, Surface: SurfaceCoarse, Dir: 1},
-			{Name: "Uphill Esses", Radius: 48, Length: 150, Width: 5.6, Banking: -1.0, Gradient: 8, Surface: SurfacePatched, Dir: -1},
-			{Name: "Short Chute", Length: 145, Width: 6.0, Gradient: 6, Surface: SurfacePatched},
-			{Name: "Bumpy Chicane", Radius: 30, Length: 74, Width: 5.4, Banking: -2.0, Gradient: 5, Surface: SurfaceBroken, Dir: 1},
-			{Name: "Second Hairpin", Radius: 17, Length: 58, Width: 5.6, Banking: 0.5, Gradient: 8, Surface: SurfaceCoarse, Dir: -1},
-			{Name: "Long Left Sweeper", Radius: 88, Length: 170, Width: 6.4, Banking: 2.5, Gradient: 4, Surface: SurfaceSmooth, Dir: -1},
-			{Name: "Crest Braking", Radius: 40, Length: 78, Width: 6.0, Banking: -0.5, Gradient: 2, Surface: SurfaceCoarse, Crest: true, Blind: true, Dir: 1},
-			{Name: "Final Esses", Radius: 42, Length: 140, Width: 5.8, Banking: -1.0, Gradient: 6, Surface: SurfacePatched, Dir: -1},
-			{Name: "Sprint to the Line", Length: 230, Width: 6.8, Gradient: 3, Surface: SurfaceSmooth},
+			{Name: "Launch", Length: 200, Width: 6.6, Gradient: 7, Surface: SurfaceCoarse},
+			{Name: "Tight Right", Radius: 19, Length: 60, Width: 5.8, Banking: 1.0, Gradient: 9, Surface: SurfaceCoarse, Dir: 1},
+			{Name: "Uphill Esses", Radius: 38, Length: 160, Width: 5.6, Banking: -1.0, Gradient: 10, Surface: SurfacePatched, Dir: -1},
+			{Name: "Short Chute", Length: 120, Width: 6.0, Gradient: 8, Surface: SurfacePatched},
+			{Name: "Bumpy Chicane", Radius: 26, Length: 74, Width: 5.4, Banking: -2.0, Gradient: 7, Surface: SurfaceBroken, Dir: 1},
+			{Name: "Second Hairpin", Radius: 17, Length: 58, Width: 5.6, Banking: 0.5, Gradient: 10, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Long Left Sweeper", Radius: 88, Length: 170, Width: 6.4, Banking: 2.5, Gradient: 6, Surface: SurfaceSmooth, Dir: -1},
+			{Name: "Crest Braking", Radius: 30, Length: 84, Width: 6.0, Banking: -0.5, Gradient: 4, Surface: SurfaceCoarse, Crest: true, Blind: true, Dir: 1},
+			{Name: "Final Esses", Radius: 36, Length: 140, Width: 5.8, Banking: -1.0, Gradient: 8, Surface: SurfacePatched, Dir: -1},
+			{Name: "Sprint to the Line", Length: 210, Width: 6.8, Gradient: 5, Surface: SurfaceSmooth},
 		},
 	},
 	{
@@ -308,20 +312,30 @@ var authoredTracks = []TrackDef{
 		Source:    SourceAuthored,
 		RealWorld: "Happogahara — a wide, fast road with a slow infield section. The one place in the game with room to make a mistake in.",
 		Segments: []Segment{
-			{Name: "Rolling Start", Length: 460, Width: 13.0, Gradient: 0, Surface: SurfaceSmooth},
+			{Name: "Rolling Start", Length: 440, Width: 13.0, Gradient: 0, Surface: SurfaceSmooth},
 			{Name: "Flat-Out Kink", Radius: 240, Length: 180, Width: 12.5, Banking: 3.0, Gradient: 0, Surface: SurfaceSmooth, Dir: 1},
 			{Name: "Big Braking", Radius: 55, Length: 110, Width: 12.0, Banking: 1.5, Gradient: -1, Surface: SurfaceSmooth, Dir: -1},
 			{Name: "Fast Left", Radius: 165, Length: 200, Width: 12.0, Banking: 2.5, Gradient: 1, Surface: SurfaceSmooth, Dir: -1},
-			{Name: "Back Straight", Length: 540, Width: 13.5, Gradient: 0, Surface: SurfaceSmooth},
+			{Name: "Back Straight", Length: 430, Width: 13.5, Gradient: 0, Surface: SurfaceSmooth},
 			// The infield is what stops this place being a single long
 			// answer. Wide and fast everywhere else, it drops to a second-gear
 			// corner on broken concrete, so the low, stiff, long-geared car
 			// that owns the straights has to give something back here.
 			{Name: "Late Braking Duel", Radius: 21, Length: 95, Width: 10.5, Banking: -1.0, Gradient: 0, Surface: SurfaceBroken, Dir: 1},
 			{Name: "Sweeping Right", Radius: 185, Length: 210, Width: 12.5, Banking: 3.5, Gradient: 0, Surface: SurfaceSmooth, Dir: 1},
-			{Name: "Technical Section", Radius: 34, Length: 165, Width: 9.0, Banking: -2.0, Gradient: 1, Surface: SurfacePatched, Crest: true, Dir: -1},
-			{Name: "Final Kink", Radius: 210, Length: 175, Width: 12.5, Banking: 2.0, Gradient: 0, Surface: SurfaceSmooth, Dir: 1},
-			{Name: "Drag to the Line", Length: 500, Width: 13.0, Gradient: 0, Surface: SurfaceSmooth},
+			// And this is the second one, which is what stopped it paying
+			// almost twice what any other pass pays for a setup. One awkward
+			// section is a compromise the fast sheet can absorb by being right
+			// everywhere else; two of them, on opposite sides of the lap, is a
+			// road that argues with itself. It climbs away from the infield on
+			// old patched concrete and doubles back on itself twice before it
+			// lets the car breathe again.
+			{Name: "Back of the Paddock", Radius: 24, Length: 105, Width: 8.5, Banking: -2.0, Gradient: 3, Surface: SurfacePatched, Blind: true, Dir: -1},
+			{Name: "Concrete Rhythm", Radius: 30, Length: 120, Width: 8.5, Banking: -1.5, Gradient: 2, Surface: SurfaceBroken, Dir: 1},
+			{Name: "Second-Gear Left", Radius: 19, Length: 90, Width: 9.0, Banking: -1.0, Gradient: 1, Surface: SurfaceBroken, Dir: -1},
+			{Name: "Technical Section", Radius: 34, Length: 165, Width: 9.0, Banking: -2.0, Gradient: 1, Surface: SurfacePatched, Crest: true, Dir: 1},
+			{Name: "Final Kink", Radius: 210, Length: 175, Width: 12.5, Banking: 2.0, Gradient: -1, Surface: SurfaceSmooth, Dir: 1},
+			{Name: "Drag to the Line", Length: 430, Width: 13.0, Gradient: 0, Surface: SurfaceSmooth},
 		},
 	},
 	{
@@ -330,17 +344,24 @@ var authoredTracks = []TrackDef{
 		Source:    SourceAuthored,
 		RealWorld: "Mt. Akagi — the descent on the south face, Gunma. Long linked rhythm sections.",
 		Segments: []Segment{
-			{Name: "Summit Start", Length: 250, Width: 7.4, Gradient: -5, Surface: SurfaceSmooth},
+			// Akagi is the descent that flows. Where Irohazaka is one long
+			// braking problem and Akina is five hairpin exits in a row, this
+			// one is linked medium-radius corners that never quite let the car
+			// settle — so it is the road that asks least of the brakes and
+			// least of traction, and the three descents stop wanting the same
+			// sheet as each other.
+			{Name: "Summit Start", Length: 230, Width: 7.4, Gradient: -5, Surface: SurfaceSmooth},
 			{Name: "Opening Sweeper", Radius: 105, Length: 145, Width: 7.2, Banking: 2.0, Gradient: -6, Surface: SurfaceSmooth, Dir: 1},
 			{Name: "Rhythm Esses 1", Radius: 58, Length: 150, Width: 6.8, Banking: 0.5, Gradient: -7, Surface: SurfaceCoarse, Dir: -1},
 			{Name: "Rhythm Esses 2", Radius: 54, Length: 145, Width: 6.8, Banking: 0.5, Gradient: -7, Surface: SurfaceCoarse, Dir: 1},
-			{Name: "Downhill Chicane", Radius: 33, Length: 84, Width: 6.4, Banking: -1.5, Gradient: -8, Surface: SurfacePatched, Dir: -1},
-			{Name: "Guardrail Hairpin", Radius: 17, Length: 62, Width: 6.0, Banking: -2.0, Gradient: -9, Surface: SurfaceCoarse, Dir: 1},
-			{Name: "Middle Straight", Length: 350, Width: 7.2, Gradient: -7, Surface: SurfaceSmooth},
-			{Name: "Off-Camber Left", Radius: 40, Length: 100, Width: 6.2, Banking: -4.5, Gradient: -8, Surface: SurfaceBroken, Blind: true, Dir: -1},
-			{Name: "Heavy Braking", Radius: 30, Length: 82, Width: 6.6, Banking: 1.0, Gradient: -6, Surface: SurfaceCoarse, Dir: 1},
-			{Name: "Final Hairpin", Radius: 16, Length: 60, Width: 6.2, Banking: 0.0, Gradient: -7, Surface: SurfaceCoarse, Dir: -1},
-			{Name: "Run Out", Length: 300, Width: 7.4, Gradient: -4, Surface: SurfaceSmooth},
+			{Name: "Rhythm Esses 3", Radius: 62, Length: 140, Width: 6.8, Banking: 1.0, Gradient: -7, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Downhill Chicane", Radius: 38, Length: 95, Width: 6.4, Banking: -1.5, Gradient: -8, Surface: SurfacePatched, Dir: 1},
+			{Name: "Guardrail Sweeper", Radius: 58, Length: 130, Width: 6.0, Banking: -2.0, Gradient: -9, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Middle Straight", Length: 240, Width: 7.2, Gradient: -7, Surface: SurfaceSmooth},
+			{Name: "Off-Camber Left", Radius: 48, Length: 110, Width: 6.2, Banking: -4.5, Gradient: -8, Surface: SurfaceBroken, Blind: true, Dir: -1},
+			{Name: "Linked Right", Radius: 52, Length: 120, Width: 6.6, Banking: 1.0, Gradient: -6, Surface: SurfaceCoarse, Dir: 1},
+			{Name: "Final Hairpin", Radius: 17, Length: 62, Width: 6.2, Banking: 0.0, Gradient: -7, Surface: SurfaceCoarse, Dir: -1},
+			{Name: "Run Out", Length: 280, Width: 7.4, Gradient: -4, Surface: SurfaceSmooth},
 		},
 	},
 	{
