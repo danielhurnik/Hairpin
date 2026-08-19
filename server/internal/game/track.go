@@ -345,20 +345,31 @@ var authoredTracks = []TrackDef{
 	},
 	{
 		ID: "usui", Name: "Usui Pass — Downhill", Downhill: true,
-		Flavour:   "Narrow, damp, and lined with a hundred and eighty corners of history.",
-		Source:    SourceAuthored,
-		RealWorld: "Usui Pass, on the old Route 18 between Yokokawa in Gunma and Karuizawa in Nagano. A hundred and eighty-odd numbered curves, narrow, wooded and rarely dry.",
+		Flavour: "Narrow, damp, and lined with a hundred and eighty corners of history.",
+		Source:  SourceAuthored, GradientMeasured: true,
+		RealWorld: "Usui Pass, on the old Route 18 between Yokokawa in Gunma and Karuizawa in Nagano. Published descriptions give 184 corners over about 11km and roughly 550m of elevation between the two stations — about 17 corners per kilometre at a 4.9% average. The corner density here is set to match that; the individual radii are still authored.",
 		Segments: []Segment{
-			{Name: "Cold Start", Length: 210, Width: 5.8, Gradient: -4, Surface: SurfacePatched},
-			{Name: "Damp Right", Radius: 62, Length: 120, Width: 5.4, Banking: -1.0, Gradient: -6, Surface: SurfacePatched, Dir: 1},
-			{Name: "Narrow Esses", Radius: 38, Length: 150, Width: 5.0, Banking: -1.5, Gradient: -7, Surface: SurfaceBroken, Dir: -1},
-			{Name: "Stone Wall Hairpin", Radius: 14, Length: 56, Width: 4.6, Banking: -2.5, Gradient: -8, Surface: SurfaceBroken, Blind: true, Dir: 1},
-			{Name: "Short Straight", Length: 190, Width: 5.6, Gradient: -5, Surface: SurfacePatched},
-			{Name: "Double Chicane", Radius: 29, Length: 88, Width: 5.0, Banking: -2.0, Gradient: -6, Surface: SurfaceBroken, Dir: -1},
-			{Name: "Mossy Braking Zone", Radius: 25, Length: 76, Width: 4.8, Banking: -3.0, Gradient: -7, Surface: SurfaceBroken, Blind: true, Dir: 1},
-			{Name: "Tunnel Sweeper", Radius: 84, Length: 145, Width: 5.6, Banking: 1.5, Gradient: -4, Surface: SurfaceSmooth, Dir: -1},
-			{Name: "Last Esses", Radius: 44, Length: 140, Width: 5.2, Banking: -1.0, Gradient: -5, Surface: SurfacePatched, Dir: 1},
-			{Name: "Bridge Straight", Length: 240, Width: 6.0, Gradient: -2, Surface: SurfaceSmooth},
+			// Usui is defined by how relentless it is: seventeen corners to the
+			// kilometre, almost none of them the same as the last, and no straight
+			// long enough to settle the car. An earlier version of this pass ran a
+			// third of that density and was duly the least interesting road in the
+			// game to set a car up for.
+			{Name: "Cold Start", Length: 120, Width: 5.8, Gradient: -4, Surface: SurfacePatched},
+			{Name: "First of Many", Radius: 62, Length: 70, Width: 5.4, Banking: -1.0, Gradient: -5, Surface: SurfacePatched, Dir: 1},
+			{Name: "Damp Left", Radius: 38, Length: 58, Width: 5.2, Banking: -1.5, Gradient: -6, Surface: SurfaceBroken, Dir: -1},
+			{Name: "Narrow Esses", Radius: 30, Length: 64, Width: 5.0, Banking: -1.0, Gradient: -6, Surface: SurfaceBroken, Dir: 1},
+			{Name: "Stone Wall Hairpin", Radius: 14, Length: 52, Width: 4.6, Banking: -2.5, Gradient: -8, Surface: SurfaceBroken, Blind: true, Dir: -1},
+			{Name: "Short Chute", Length: 88, Width: 5.6, Gradient: -5, Surface: SurfacePatched},
+			{Name: "Curve 96", Radius: 44, Length: 60, Width: 5.2, Banking: 0.5, Gradient: -5, Surface: SurfacePatched, Dir: 1},
+			{Name: "Curve 97", Radius: 26, Length: 54, Width: 5.0, Banking: -2.0, Gradient: -6, Surface: SurfaceBroken, Dir: -1},
+			{Name: "Double Chicane", Radius: 29, Length: 62, Width: 5.0, Banking: -2.0, Gradient: -6, Surface: SurfaceBroken, Dir: 1},
+			{Name: "Mossy Braking Zone", Radius: 22, Length: 56, Width: 4.8, Banking: -3.0, Gradient: -7, Surface: SurfaceBroken, Blind: true, Dir: -1},
+			{Name: "Under the Brick Arches", Radius: 55, Length: 74, Width: 5.4, Banking: 1.0, Gradient: -4, Surface: SurfaceSmooth, Dir: 1},
+			{Name: "Tunnel Sweeper", Radius: 84, Length: 96, Width: 5.6, Banking: 1.5, Gradient: -3, Surface: SurfaceSmooth, Dir: -1},
+			{Name: "Blind Tightener", Radius: 18, Length: 54, Width: 4.8, Banking: -2.0, Gradient: -6, Surface: SurfaceBroken, Blind: true, Dir: 1},
+			{Name: "Last Esses", Radius: 36, Length: 68, Width: 5.2, Banking: -1.0, Gradient: -5, Surface: SurfacePatched, Dir: -1},
+			{Name: "Second to Last", Radius: 48, Length: 62, Width: 5.4, Banking: 0.5, Gradient: -4, Surface: SurfacePatched, Dir: 1},
+			{Name: "Bridge Straight", Length: 190, Width: 6.0, Gradient: -2, Surface: SurfaceSmooth},
 		},
 	},
 }

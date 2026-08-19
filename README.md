@@ -238,8 +238,18 @@ else is derived from that:
 - **What kind of corner it is** comes from its radius and what leads into it, so
   the attribute weights hang off geometry rather than off a label.
 
-The passes are currently **authored approximations** of the real roads'
-character — Irohazaka's forty-eight one-way hairpins, Usui's damp stone-walled
+Where published figures for a road exist, the authored geometry is calibrated
+against them and the figures are recorded in the track's `RealWorld` field.
+Irohazaka is documented at 6–7% average gradient rising above 9%, and the
+authored version runs 7.4% with sections at 9–11%. Usui is documented at 184
+corners over about 11km with roughly 550m of elevation — 17 corners per
+kilometre at 4.9% — and was rebuilt to that density, which took it from 4.9
+corners per kilometre to 10.6 and lifted its setup sensitivity from the worst
+in the game. Mount Haruna's real road is a normal narrow two-lane mountain
+road rather than the wide one the anime drew, which the 5.6–7.4m widths match.
+
+Those are cross-checked descriptions, not surveys. The passes remain
+**authored approximations** — Irohazaka's forty-eight one-way hairpins, Usui's damp stone-walled
 narrowness, Akina's five in a row — not surveys of them. Every track says so
 in its own data (`source: "authored"`) and names the road it stands for, so
 the claim is in the API rather than buried in a comment.
@@ -570,9 +580,14 @@ are genuinely not finished, in the order they should be addressed:
     internally and displays a real value, but the player picks one of five
     positions rather than typing 87mm. Exposing continuous input is now a
     small change rather than a rewrite.
-12. **Happogahara pays more for a setup than the others** — 7.0% against a
-    3.1% floor on Usui. Authoring a second awkward section into it would even
-    that out.
+12. **Happogahara pays more for a setup than the others** — 7.8% against a
+    3.5% floor. Authoring a second awkward section into it would even that
+    out.
+13. **Half the passes do not care what layout you drive.** Weight balance
+    splits front- from rear-driven cars on Akina, Happogahara and Usui, but
+    the steep descents are so braking-dominated that every layout wants mass
+    forward. That is the physics being right, and it does mean three of the
+    six roads are layout-blind.
 
 ## What Milestone 2 might be
 

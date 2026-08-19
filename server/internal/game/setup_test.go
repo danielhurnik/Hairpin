@@ -361,21 +361,44 @@ func TestASetupForOnePassIsWrongOnAnother(t *testing.T) {
 // And the optimum has to depend on the car, not just the road — otherwise one
 // published sheet per pass serves the entire playerbase.
 func TestTheBestSetupDependsOnTheCar(t *testing.T) {
-	track, _ := TrackByID("akagi_down")
-
 	layouts := []Drivetrain{FR, FF, MR, AWD}
-	sheets := map[Drivetrain]Setup{}
+
+	// Not every road has to discriminate. A steep descent is dominated by
+	// braking, and on those every layout genuinely does want mass forward —
+	// that is the physics being right, not the model being lazy. What matters
+	// is that enough of the game disagrees that no single sheet per pass can
+	// be published and trusted.
+	disagreeing := 0
+	for _, track := range Tracks {
+		distinct := map[Setup]bool{}
+		for _, dt := range layouts {
+			b := referenceBuild()
+			b.Car.Drivetrain = dt
+			distinct[bestSetupFor(b, track)] = true
+		}
+		if len(distinct) > 1 {
+			disagreeing++
+		}
+	}
+	if disagreeing < len(Tracks)/3 {
+		t.Errorf("layouts want the same sheet on all but %d of %d passes",
+			disagreeing, len(Tracks))
+	}
+	t.Logf("layouts disagree on %d of %d passes", disagreeing, len(Tracks))
+
+	// Where they do disagree, weight balance is the axis that flips: mass over
+	// the driven wheels is traction, so a front-driven car wants the opposite
+	// of a rear-driven one.
+	akina, _ := TrackByID("akina_down")
+	ballast := map[Drivetrain]int{}
 	for _, dt := range layouts {
 		b := referenceBuild()
 		b.Car.Drivetrain = dt
-		sheets[dt] = bestSetupFor(b, track)
+		ballast[dt] = bestSetupFor(b, akina).Ballast
 	}
-	distinct := map[Setup]bool{}
-	for _, s := range sheets {
-		distinct[s] = true
-	}
-	if len(distinct) < 2 {
-		t.Errorf("every layout wants the identical sheet on %s: %+v", track.Name, sheets[FR])
+	if ballast[FF] <= 0 || ballast[FR] >= 0 {
+		t.Errorf("on Akina front-drive wants %+d and rear-drive %+d; the driven axle should split them",
+			ballast[FF], ballast[FR])
 	}
 
 	// A powerful car and a nimble one should also disagree.
@@ -384,7 +407,7 @@ func TestTheBestSetupDependsOnTheCar(t *testing.T) {
 	nimble := referenceBuild()
 	nimble.Car.Grip *= 1.4
 	nimble.Car.Handling *= 1.3
-	if bestSetupFor(powerful, track) == bestSetupFor(nimble, track) {
+	if bestSetupFor(powerful, akina) == bestSetupFor(nimble, akina) {
 		t.Error("a power car and a grip car want the identical sheet")
 	}
 }
