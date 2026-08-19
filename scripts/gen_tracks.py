@@ -8,11 +8,18 @@ same structure, measured.
 
     ./gen_tracks.py --self-test
     ./gen_tracks.py --manifest tracks/manifest.json --out ../server/internal/game/track_data.go
+    ./gen_tracks.py --manifest tracks/manifest.json --out ... --survey --report
 
 Input is a GPX file (anything that records a track: a phone, a GPS unit, an
 export from a mapping site) or an Overpass API JSON response for the road's
 OSM way. Either gives a string of latitude/longitude points, ideally with
 elevation.
+
+With --survey there is no input to find first: the roads named in the manifest
+are fetched from the Overpass API, stitched back into one line, sent to an
+elevation service for their heights, and written here as GPX files, which the
+rest of the run then reads. That is the whole switchover, and the only thing it
+needs that this repository cannot provide is the network.
 
 What comes out of the geometry, and what cannot:
 
@@ -34,6 +41,10 @@ import math
 import os
 import re
 import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 import xml.etree.ElementTree as ET
 
 EARTH_R = 6371008.8  # mean radius, metres
@@ -87,22 +98,304 @@ def read_gpx(path):
 
 
 def read_overpass(path):
-    """Points and tags from an Overpass JSON response.
+    """Points and tags from a saved Overpass JSON response.
 
     Expects a query run with `out geom;` so each way carries its coordinates.
-    Ways are stitched in the order they appear, which is why the query should
-    ask for one road at a time.
+    A road is almost never one way — OSM splits it at every junction, bridge
+    and change of tagging — so the pieces are stitched end to end rather than
+    concatenated in whatever order the API felt like returning them.
     """
     with open(path) as fh:
         doc = json.load(fh)
-    pts, tags = [], {}
+    points, tags, _ = stitch(ways_from(doc))
+    return points, tags
+
+
+# ---------------------------------------------------------------------------
+# Fetching a road
+#
+# The pipeline below can take a road from a file, which needs somebody to go
+# and export one first. This does that part too: given a bounding box and a
+# name in the manifest, it asks Overpass for the way, stitches the pieces back
+# into one road, asks an elevation service what height each point is at, and
+# writes the result as a GPX next to the manifest.
+#
+# The GPX is the point. It is an ordinary source file the rest of this script
+# already knows how to read, it can be looked at before it is trusted, it goes
+# into version control next to the track it produced, and re-running the
+# importer without a network reads it back rather than fetching it again.
+# ---------------------------------------------------------------------------
+
+OVERPASS_URL = 'https://overpass-api.de/api/interpreter'
+# opentopodata and open-elevation both answer `?locations=lat,lon|lat,lon` with
+# {"results": [{"elevation": ...}]}, so either URL works here.
+ELEVATION_URL = 'https://api.opentopodata.org/v1/aster30m'
+ELEVATION_BATCH = 100
+HTTP_TIMEOUT = 180
+USER_AGENT = 'hairpin-gen_tracks/1.0 (+https://github.com/danielhurnik/hairpin)'
+
+
+def overpass_ql(osm, timeout=90):
+    """The Overpass query for one road, from its manifest entry.
+
+    `out geom;` is the part that matters: without it the response has ways and
+    no coordinates.
+    """
+    if osm.get('overpass'):
+        return osm['overpass']
+    bbox = osm.get('bbox')
+    if not bbox or len(bbox) != 4:
+        raise SystemExit('osm block needs "bbox": [south, west, north, east], '
+                         'or a raw "overpass" query')
+    filters = ['[highway]']
+    if osm.get('name'):
+        filters.append('[name~"%s"]' % osm['name'])
+    if osm.get('ref'):
+        filters.append('[ref~"%s"]' % osm['ref'])
+    return ('[out:json][timeout:%d];\nway%s(%s);\nout geom;'
+            % (timeout, ''.join(filters), ','.join('%.6f' % float(v) for v in bbox)))
+
+
+def _fetch_json(url, data=None, timeout=HTTP_TIMEOUT):
+    headers = {'User-Agent': USER_AGENT}
+    body = None
+    if data is not None:
+        body = data.encode('utf-8')
+        headers['Content-Type'] = 'application/x-www-form-urlencoded'
+    req = urllib.request.Request(url, data=body, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as err:
+        raise SystemExit('%s said %d %s' % (url, err.code, err.reason))
+    except urllib.error.URLError as err:
+        raise SystemExit('could not reach %s: %s' % (url, err.reason))
+
+
+def fetch_overpass(query, url=OVERPASS_URL, timeout=HTTP_TIMEOUT):
+    return _fetch_json(url, urllib.parse.urlencode({'data': query}), timeout)
+
+
+def ways_from(doc):
+    """Every way in an Overpass response that carries coordinates."""
+    ways = []
     for el in doc.get('elements', []):
         if el.get('type') != 'way':
             continue
-        tags.update(el.get('tags') or {})
-        for node in el.get('geometry') or []:
-            pts.append((node['lat'], node['lon'], None))
-    return pts, tags
+        geom = el.get('geometry') or []
+        if len(geom) < 2:
+            continue
+        ways.append({
+            'id': el.get('id'),
+            'tags': el.get('tags') or {},
+            'points': [(node['lat'], node['lon']) for node in geom],
+        })
+    return ways
+
+
+def _key(point):
+    """Endpoint identity. OSM shares node coordinates exactly between the ways
+    that meet at them, so rounding to about a tenth of a metre is plenty."""
+    return (round(point[0], 6), round(point[1], 6))
+
+
+def _run_length(points):
+    total = 0.0
+    for i in range(len(points) - 1):
+        total += _haversine(points[i], points[i + 1])
+    return total
+
+
+def _haversine(a, b):
+    lat1, lon1 = math.radians(a[0]), math.radians(a[1])
+    lat2, lon2 = math.radians(b[0]), math.radians(b[1])
+    dlat, dlon = lat2 - lat1, lon2 - lon1
+    h = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+    return 2 * EARTH_R * math.asin(math.sqrt(h))
+
+
+def stitch(ways, start=None, downhill=None):
+    """Join ways end to end into the longest single road they describe.
+
+    A road is not one way. OSM splits it wherever the tagging changes — a
+    bridge, a tunnel, a junction, a different surface — and Overpass returns
+    the pieces in no particular order, some of them running backwards. Laid end
+    to end in the order they arrive, they produce a road that teleports every
+    few hundred metres, and a curvature pipeline reads those jumps as corners.
+
+    So: match the pieces up by their endpoints, walk the longest chain that can
+    be made, and point it the right way round. Anything the bounding box caught
+    that is not part of that chain — a side road, a car park — is dropped, and
+    the report says how much.
+    """
+    if not ways:
+        return [], {}, {'ways': 0, 'used': 0, 'dropped': 0, 'length': 0.0}
+
+    ends = {}
+    for i, way in enumerate(ways):
+        ends.setdefault(_key(way['points'][0]), []).append((i, 'head'))
+        ends.setdefault(_key(way['points'][-1]), []).append((i, 'tail'))
+
+    def extend(chain_points, used):
+        """Walk forward from the end of the chain as far as the pieces go."""
+        while True:
+            candidates = [
+                (idx, side) for idx, side in ends.get(_key(chain_points[-1]), [])
+                if idx not in used
+            ]
+            if not candidates:
+                return
+            # At a junction, take the longest continuation. It is the one most
+            # likely to be the road rather than something joining it.
+            idx, side = max(candidates, key=lambda c: _run_length(ways[c[0]]['points']))
+            used.add(idx)
+            piece = ways[idx]['points']
+            if side == 'tail':
+                piece = list(reversed(piece))
+            chain_points.extend(piece[1:])
+
+    best, best_used = [], set()
+    for seed in range(len(ways)):
+        used = {seed}
+        points = list(ways[seed]['points'])
+        extend(points, used)
+        points.reverse()
+        extend(points, used)
+        if _run_length(points) > _run_length(best):
+            best, best_used = points, used
+
+    # Which way round. An explicit start point wins; otherwise a road the
+    # manifest calls a descent has to come out running downhill, and the only
+    # thing that can say so before the elevation arrives is the manifest.
+    if start:
+        if _haversine(best[0], start) > _haversine(best[-1], start):
+            best.reverse()
+
+    tags = {}
+    for idx in sorted(best_used):
+        tags.update(ways[idx]['tags'])
+
+    report = {
+        'ways': len(ways),
+        'used': len(best_used),
+        'dropped': len(ways) - len(best_used),
+        'length': _run_length(best),
+    }
+    return [(lat, lon, None) for lat, lon in best], tags, report
+
+
+def fetch_elevation(points, url=ELEVATION_URL, batch=ELEVATION_BATCH, pause=1.0):
+    """Ask an elevation service how high each point is.
+
+    An OSM way has coordinates and no elevation, and gradient is most of what
+    makes a descent a descent here — it lengthens braking, unloads the rear and
+    decides which setup wins. A road imported without this step is a flat one.
+    """
+    out = []
+    for i in range(0, len(points), batch):
+        chunk = points[i:i + batch]
+        query = urllib.parse.urlencode(
+            {'locations': '|'.join('%.6f,%.6f' % (p[0], p[1]) for p in chunk)})
+        doc = _fetch_json(url + ('&' if '?' in url else '?') + query)
+        results = doc.get('results') or []
+        if len(results) != len(chunk):
+            raise SystemExit('elevation service returned %d heights for %d points'
+                             % (len(results), len(chunk)))
+        for point, result in zip(chunk, results):
+            ele = result.get('elevation')
+            out.append((point[0], point[1], None if ele is None else float(ele)))
+        if pause and i + batch < len(points):
+            time.sleep(pause)
+    return out
+
+
+def take_section(points, span):
+    """Keep one measured stretch of a long road.
+
+    The real Iroha-zaka is six and a half kilometres; a pass in the game is
+    about one and a half, which is what its whole pacing is built on — race
+    length, stamina, how long a replay takes to watch. Importing the road
+    wholesale would measure the right road and produce a four-minute race.
+
+    So a manifest can name the stretch it wants in metres from the start. The
+    geometry inside it is still measured; the choice of where to start and stop
+    is the same authored decision as picking which road to model in the first
+    place, and --report says what was cut.
+    """
+    if not span:
+        return points
+    lo, hi = float(span[0]), float(span[1])
+    out, travelled = [], 0.0
+    for i, point in enumerate(points):
+        if i > 0:
+            travelled += _haversine(points[i - 1], point)
+        if travelled < lo:
+            continue
+        if travelled > hi:
+            break
+        out.append(point)
+    if len(out) < 8:
+        raise SystemExit('section %.0f-%.0fm keeps only %d points' % (lo, hi, len(out)))
+    return out
+
+
+def write_gpx(path, points, meta):
+    """The fetched road, as a file anyone can open."""
+    lines = ['<?xml version="1.0" encoding="UTF-8"?>',
+             '<gpx version="1.1" creator="hairpin/gen_tracks.py" '
+             'xmlns="http://www.topografix.com/GPX/1/1">',
+             '  <metadata><name>%s</name><desc>%s</desc><time>%s</time></metadata>'
+             % (_xml(meta.get('name', '')), _xml(meta.get('real_world', '')),
+                time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())),
+             '  <trk><name>%s</name><trkseg>' % _xml(meta.get('id', ''))]
+    for lat, lon, ele in points:
+        if ele is None:
+            lines.append('    <trkpt lat="%.7f" lon="%.7f"/>' % (lat, lon))
+        else:
+            lines.append('    <trkpt lat="%.7f" lon="%.7f"><ele>%.2f</ele></trkpt>'
+                         % (lat, lon, ele))
+    lines.append('  </trkseg></trk>')
+    lines.append('</gpx>')
+    with open(path, 'w') as fh:
+        fh.write('\n'.join(lines) + '\n')
+
+
+def _xml(s):
+    return (str(s).replace('&', '&amp;').replace('<', '&lt;')
+            .replace('>', '&gt;').replace('"', '&quot;'))
+
+
+def survey(meta, base, overpass_url=OVERPASS_URL, elevation_url=ELEVATION_URL,
+           pause=1.0, quiet=False):
+    """Fetch one road and leave a GPX of it next to the manifest."""
+    osm = meta['osm']
+    say = (lambda *a: None) if quiet else (lambda *a: print(*a))
+
+    say('  querying Overpass for %s…' % meta['name'])
+    doc = fetch_overpass(overpass_ql(osm), url=overpass_url)
+    ways = ways_from(doc)
+    if not ways:
+        raise SystemExit('%s: the query matched no ways — check the bbox and the name filter'
+                         % meta['id'])
+
+    points, tags, report = stitch(ways, start=osm.get('start'))
+    say('    %d ways, %d stitched into one road, %d dropped, %.0fm'
+        % (report['ways'], report['used'], report['dropped'], report['length']))
+
+    points = take_section(points, osm.get('section'))
+    say('  asking for elevation on %d points…' % len(points))
+    points = fetch_elevation([(p[0], p[1]) for p in points], url=elevation_url, pause=pause)
+
+    # A descent has to run downhill. Overpass has no idea which end is the top.
+    if meta.get('downhill') and points[0][2] is not None and points[-1][2] is not None:
+        if points[0][2] < points[-1][2]:
+            points.reverse()
+            say('    reversed — the manifest calls this one a descent')
+
+    path = os.path.join(base, meta.get('source') or (meta['id'] + '.gpx'))
+    write_gpx(path, points, meta)
+    say('  wrote %s' % os.path.relpath(path))
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -523,6 +816,52 @@ def osm_surface(tags):
 
 
 # ---------------------------------------------------------------------------
+# Sanity
+# ---------------------------------------------------------------------------
+
+def implausible(meta, segs):
+    """Everything about the measurement that does not look like a road.
+
+    A bounding box is a blunt instrument: draw it slightly wrong and the query
+    comes back with the car park, the road on the other side of the valley, or
+    both roads of a one-way pair laid end to end. The geometry pipeline will
+    measure whatever it is given perfectly happily, and the first sign of
+    trouble is a pass in the game that feels wrong to drive months later.
+
+    So the manifest can say what the road is known to be — the published
+    figures, the ones in the track's RealWorld note — and anything well outside
+    them is said out loud at import time. These are warnings rather than
+    errors: an unusual road is allowed, it just has to be looked at.
+    """
+    out = []
+    expect = meta.get('expect') or {}
+    corners = [s for s in segs if s['radius'] > 0]
+    length = sum(s['length'] for s in segs)
+    descent = sum(-s['gradient'] / 100 * s['length'] for s in segs if s['gradient'] < 0)
+
+    def band(name, got, want, unit=''):
+        lo, hi = float(want[0]), float(want[1])
+        if got < lo or got > hi:
+            out.append('%s came out %.0f%s, expected %.0f-%.0f%s — check the query'
+                       % (name, got, unit, lo, hi, unit))
+
+    if expect.get('length_m'):
+        band('length', length, expect['length_m'], 'm')
+    if expect.get('corners'):
+        band('corner count', len(corners), expect['corners'])
+    if expect.get('descent_m'):
+        band('descent', descent, expect['descent_m'], 'm')
+
+    # These hold for any mountain road, manifest or no manifest.
+    if corners and len(corners) / max(length / 1000.0, 0.001) > 40:
+        out.append('%.0f corners per kilometre — the trace is probably noisy or doubled back'
+                   % (len(corners) / (length / 1000.0)))
+    if length > 0 and descent / length > 0.16:
+        out.append('averages %.0f%% downhill, which is a ski slope' % (descent / length * 100))
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Emitting Go
 # ---------------------------------------------------------------------------
 
@@ -532,13 +871,31 @@ def go_track(meta, segs):
     lines.append('\t{')
     lines.append('\t\tID: %s, Name: %s, Source: SourceSurveyed,' % (
         go_str(meta['id']), go_str(meta['name'])))
+
+    # gofmt aligns the values in a run of single-field lines like these, and CI
+    # rejects anything it would reformat — so the generator has to produce them
+    # already aligned rather than leaving a lint failure behind for whoever
+    # runs it.
+    fields = []
     if meta.get('downhill'):
-        lines.append('\t\tDownhill: true,')
-    lines.append('\t\tFlavour: %s,' % go_str(meta.get('flavour', '')))
+        fields.append(('Downhill', 'true'))
+    fields.append(('Flavour', go_str(meta.get('flavour', ''))))
     measured = bool(segs) and segs[0].get('gradient_measured')
-    lines.append('\t\tGradientMeasured: %s,' % ('true' if measured else 'false'))
-    if meta.get('real_world'):
-        lines.append('\t\tRealWorld: %s,' % go_str(meta['real_world']))
+    fields.append(('GradientMeasured', 'true' if measured else 'false'))
+    real = meta.get('real_world', '')
+    # A section of a road is a measured section of a road, and the note should
+    # say which stretch rather than implying the whole pass was driven.
+    section = (meta.get('osm') or {}).get('section')
+    if real and section:
+        real += (' This is the %.1fkm between %.1fkm and %.1fkm from the start of the recording.'
+                 % ((float(section[1]) - float(section[0])) / 1000,
+                    float(section[0]) / 1000, float(section[1]) / 1000))
+    if real:
+        fields.append(('RealWorld', go_str(real)))
+
+    pad = max(len(key) for key, _ in fields) + 1
+    for key, value in fields:
+        lines.append('\t\t%s %s,' % ((key + ':').ljust(pad), value))
     lines.append('\t\tSegments: []Segment{')
     for i, s in enumerate(segs):
         nm = name_for[i] if i < len(name_for) else default_name(s, i, len(segs))
@@ -720,6 +1077,98 @@ class _Rand:
         return math.sqrt(-2 * math.log(u1)) * math.cos(2 * math.pi * u2)
 
 
+class _FakeServices:
+    """A local stand-in for Overpass and an elevation service.
+
+    The fetch is the part of this with the most to get wrong — the query, ways
+    arriving out of order and half of them backwards, a bounding box that
+    caught a side road, batching the elevation lookups, and a descent that has
+    to end up pointing downhill — and none of it can be checked against the
+    real services from CI, which has no network at all.
+
+    So a road whose shape is known exactly is served over real HTTP on
+    localhost, in the shape those two services answer in, and the importer is
+    pointed at it and asked what it made of the road. Everything from the URL
+    to the GPX is then the same code that runs against the real thing.
+    """
+
+    def __init__(self, points, tags, split=(0.34, 0.71), decoy=True):
+        import http.server
+        import threading
+
+        n = len(points)
+        cuts = [0] + [int(n * f) for f in split] + [n - 1]
+        ways = []
+        for i in range(len(cuts) - 1):
+            chunk = points[cuts[i]:cuts[i + 1] + 1]
+            ways.append({'type': 'way', 'id': 100 + i, 'tags': dict(tags),
+                         'geometry': [{'lat': p[0], 'lon': p[1]} for p in chunk]})
+        # One piece comes back the wrong way round, which is normal: OSM way
+        # direction is about one-way traffic, not about which way you drive it.
+        ways[1]['geometry'].reverse()
+        # And one piece is not this road at all — a spur the box caught.
+        if decoy:
+            lat, lon, _ = points[0]
+            ways.append({'type': 'way', 'id': 999, 'tags': {'highway': 'service'},
+                         'geometry': [{'lat': lat + 0.01 + i * 0.0002, 'lon': lon + 0.01}
+                                      for i in range(6)]})
+        # Returned in whatever order the API felt like.
+        ways = [ways[2], ways[0], ways[-1], ways[1]] if decoy else [ways[2], ways[0], ways[1]]
+        self.doc = {'elements': ways}
+        self.heights = {(round(p[0], 6), round(p[1], 6)): p[2] for p in points}
+        self.elevation_calls = 0
+        outer = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _send(self, payload):
+                body = json.dumps(payload).encode()
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Content-Length', str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):
+                length = int(self.headers.get('Content-Length', 0))
+                form = urllib.parse.parse_qs(self.rfile.read(length).decode())
+                query = (form.get('data') or [''])[0]
+                if 'out geom' not in query:
+                    self._send({'elements': []})  # no geometry asked for, none given
+                    return
+                self._send(outer.doc)
+
+            def do_GET(self):
+                params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                locations = (params.get('locations') or [''])[0].split('|')
+                outer.elevation_calls += 1
+                results = []
+                for loc in locations:
+                    lat, lon = (float(v) for v in loc.split(','))
+                    results.append({'elevation': outer.heights.get((round(lat, 6), round(lon, 6))),
+                                    'location': {'lat': lat, 'lng': lon}})
+                self._send({'status': 'OK', 'results': results})
+
+        self.server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    @property
+    def overpass_url(self):
+        return 'http://127.0.0.1:%d/overpass' % self.port
+
+    @property
+    def elevation_url(self):
+        return 'http://127.0.0.1:%d/elevation' % self.port
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
 def self_test():
     failures = []
 
@@ -838,6 +1287,113 @@ def self_test():
           go.count('{') == go.count('}') and 'Segments: []Segment{' in go,
           '%d lines' % len(go.splitlines()))
 
+    print('\nfetching — the switchover, against stand-ins for the two services')
+    import shutil
+    import tempfile
+
+    road = Path(ele0=1200)
+    for i in range(4):
+        road.arc(20, 170 if i % 2 == 0 else -170, gradient=-9)
+        road.straight(120, gradient=-7)
+    road_points = road.points()
+
+    services = _FakeServices(road_points, {'highway': 'secondary', 'name': 'Test Pass',
+                                           'lanes': '2', 'surface': 'asphalt'})
+    workdir = tempfile.mkdtemp(prefix='hairpin-survey-')
+    try:
+        query = overpass_ql({'bbox': [36.7, 139.4, 36.8, 139.6], 'name': 'Test Pass'})
+        check('the query asks for geometry', 'out geom;' in query and 'name~"Test Pass"' in query,
+              query.splitlines()[1])
+
+        doc = fetch_overpass(query, url=services.overpass_url)
+        ways = ways_from(doc)
+        check('the road comes back in pieces', len(ways) == 4, '%d ways' % len(ways))
+
+        stitched, tags, report = stitch(ways)
+        check('and stitches back into one road',
+              report['used'] == 3 and report['dropped'] == 1,
+              '%d used, %d dropped, %.0fm' % (report['used'], report['dropped'], report['length']))
+        check('with its length intact',
+              abs(report['length'] - _run_length([(p[0], p[1]) for p in road_points])) < 15,
+              '%.0fm measured against %.0fm'
+              % (report['length'], _run_length([(p[0], p[1]) for p in road_points])))
+        check('no jumps left in it where two pieces met',
+              max(_haversine(stitched[i], stitched[i + 1])
+                  for i in range(len(stitched) - 1)) < 25,
+              'largest step %.1fm' % max(_haversine(stitched[i], stitched[i + 1])
+                                         for i in range(len(stitched) - 1)))
+        check('and the tags off the way came with it',
+              tags.get('name') == 'Test Pass' and osm_width(tags) == 5.2,
+              '%s, %.1fm wide' % (tags.get('name'), osm_width(tags)))
+
+        filled = fetch_elevation([(p[0], p[1]) for p in stitched],
+                                 url=services.elevation_url, batch=100, pause=0)
+        check('every point comes back with a height',
+              all(p[2] is not None for p in filled),
+              '%d points in %d requests' % (len(filled), services.elevation_calls))
+        check('and the lookups were batched rather than asked one at a time',
+              services.elevation_calls <= len(filled) / 50 + 1,
+              '%d requests for %d points' % (services.elevation_calls, len(filled)))
+
+        _, _, segs = build_track(filled, tags, {'width': None})
+        # The hairpins are what the road is; how the pipeline carves up the
+        # widening radius on the way out of one is its own business, and on a
+        # real trace that blend is a real part of the road.
+        hairpins = [s for s in segs if 0 < s['radius'] < 30]
+        check('the fetched road measures as the road it is',
+              len(hairpins) == 4 and all(abs(c['radius'] - 20) / 20 < 0.15 for c in hairpins),
+              '%d hairpins, R %s'
+              % (len(hairpins), ', '.join('%.0f' % c['radius'] for c in hairpins)))
+        check('with a gradient on it, which OSM alone could never have said',
+              segs[0]['gradient_measured'] and abs(segs[0]['gradient']) > 5,
+              '%.1f%% on the first corner' % segs[0]['gradient'])
+
+        # The whole thing, the way the command line runs it.
+        meta = {'id': 'test_pass', 'name': 'Test Pass', 'downhill': True,
+                'source': 'test_pass.gpx',
+                'osm': {'bbox': [36.7, 139.4, 36.8, 139.6], 'name': 'Test Pass'}}
+        written = survey(meta, workdir, overpass_url=services.overpass_url,
+                         elevation_url=services.elevation_url, pause=0, quiet=True)
+        reread = read_gpx(written)
+        check('a survey leaves a GPX behind that reads back',
+              len(reread) == len(filled) and reread[0][2] is not None,
+              '%d points' % len(reread))
+        check('pointing downhill, because the manifest says it is a descent',
+              reread[0][2] > reread[-1][2],
+              '%.0fm down to %.0fm' % (reread[0][2], reread[-1][2]))
+
+        _, _, segs = build_track(reread, tags, meta)
+        go = go_track(meta, segs)
+        check('and the Go it emits declares itself surveyed',
+              'Source: SourceSurveyed' in go and 'GradientMeasured: true' in go, 'ok')
+        # CI rejects anything gofmt would reformat, and gofmt aligns the values
+        # in a run of single-field lines. Checked here rather than left for
+        # whoever runs the importer to discover from a red build.
+        aligned = [ln for ln in go.splitlines()
+                   if ln.startswith('\t\t') and ':' in ln and not ln.strip().startswith('{')
+                   and not ln.rstrip().endswith('{')]
+        columns = {ln.index(':') + len(ln[ln.index(':'):]) - len(ln[ln.index(':'):].lstrip(': '))
+                   for ln in aligned if ln.count(':') == 1}
+        check('with its fields aligned the way gofmt wants them',
+              len(columns) <= 1, 'value column %s' % sorted(columns))
+
+        # A section of a long road, so importing a six-kilometre pass does not
+        # quietly turn a one-minute race into a four-minute one.
+        cut = take_section(stitched, [200, 700])
+        check('a section keeps the stretch it was asked for',
+              abs(_run_length([(p[0], p[1]) for p in cut]) - 500) < 30,
+              '%.0fm' % _run_length([(p[0], p[1]) for p in cut]))
+
+        # And the guard against a bounding box that caught the wrong thing.
+        warnings = implausible({'expect': {'length_m': [4000, 9000]}}, segs)
+        check('a road well outside its published length is called out',
+              any('length' in w for w in warnings), warnings[0] if warnings else 'no warning')
+        check('and one inside it is not',
+              not implausible({'expect': {'length_m': [500, 2000]}}, segs), 'quiet')
+    finally:
+        services.stop()
+        shutil.rmtree(workdir, ignore_errors=True)
+
     print()
     if failures:
         print('%d check(s) failed: %s' % (len(failures), ', '.join(failures)))
@@ -856,6 +1412,15 @@ def main():
     ap.add_argument('--manifest', help='JSON describing each track and its source file')
     ap.add_argument('--out', help='Go file to write')
     ap.add_argument('--report', action='store_true', help='print what was measured')
+    ap.add_argument('--survey', action='store_true',
+                    help='fetch any road whose source file is missing from OSM and an '
+                         'elevation service first, then generate')
+    ap.add_argument('--refetch', action='store_true',
+                    help='with --survey, fetch even where a recording already exists')
+    ap.add_argument('--overpass-url', default=OVERPASS_URL)
+    ap.add_argument('--elevation-url', default=ELEVATION_URL)
+    ap.add_argument('--pause', type=float, default=1.0,
+                    help='seconds between elevation requests; these are free services')
     args = ap.parse_args()
 
     if args.self_test:
@@ -868,9 +1433,24 @@ def main():
         manifest = json.load(fh)
     base = os.path.dirname(os.path.abspath(args.manifest))
 
+    if args.survey:
+        for meta in manifest['tracks']:
+            if not meta.get('osm'):
+                continue
+            src = os.path.join(base, meta.get('source') or (meta['id'] + '.gpx'))
+            if os.path.exists(src) and not args.refetch:
+                print('  %s already recorded at %s' % (meta['name'], os.path.relpath(src)))
+                continue
+            survey(meta, base, overpass_url=args.overpass_url,
+                   elevation_url=args.elevation_url, pause=args.pause)
+
     blocks = []
     for meta in manifest['tracks']:
         src = os.path.join(base, meta['source'])
+        if not os.path.exists(src):
+            print('  - %s: no recording at %s, keeping the authored stand-in'
+                  % (meta['name'], os.path.relpath(src)))
+            continue
         tags = {}
         if src.endswith('.json'):
             points, tags = read_overpass(src)
@@ -879,6 +1459,9 @@ def main():
         if not points:
             raise SystemExit('no points in %s' % src)
         pts, _, segs = build_track(points, tags, meta)
+
+        for warning in implausible(meta, segs):
+            print('  ! %s: %s' % (meta['name'], warning))
 
         if args.report:
             if not segs[0].get('gradient_measured'):
@@ -892,6 +1475,10 @@ def main():
                   % (meta['name'], total, len(corners), tightest, drop))
 
         blocks.append(go_track(meta, segs))
+
+    if not blocks:
+        print('nothing to generate — no manifest entry has a recording yet')
+        return
 
     out = HEADER % '\n'.join(blocks)
     if args.out:

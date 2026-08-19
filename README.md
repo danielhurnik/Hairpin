@@ -246,7 +246,16 @@ corners over about 11km with roughly 550m of elevation — 17 corners per
 kilometre at 4.9% — and was rebuilt to that density, which took it from 4.9
 corners per kilometre to 10.6 and lifted its setup sensitivity from the worst
 in the game. Mount Haruna's real road is a normal narrow two-lane mountain
-road rather than the wide one the anime drew, which the 5.6–7.4m widths match.
+road rather than the wide one the anime drew, which the 5.6–7.4m widths match;
+its east face averages about 7%, and Akina's steepest corners came down from
+10% to 9% to land there.
+
+The three descents are also authored to be *different descents*, because three
+roads that ask the same question are one road. Irohazaka is the long braking
+problem, Akina is five hairpin exits in a row with the straights cut back so
+they dominate it, and Akagi flows — linked medium-radius corners that never let
+the car settle, which is what "rhythm section after rhythm section" should mean
+and did not while it had a 350-metre straight into a heavy braking zone.
 
 Those are cross-checked descriptions, not surveys. The passes remain
 **authored approximations** — Irohazaka's forty-eight one-way hairpins, Usui's damp stone-walled
@@ -254,25 +263,49 @@ narrowness, Akina's five in a row — not surveys of them. Every track says so
 in its own data (`source: "authored"`) and names the road it stands for, so
 the claim is in the API rather than buried in a comment.
 
-**Replacing that with measured geometry takes one command.** `scripts/gen_tracks.py`
-turns a recorded line down the real road — a GPX from a phone, or the OSM way
-via Overpass — into the same structure, measured:
+**Replacing that with measured geometry is one command:**
 
 ```bash
 cd scripts
-./gen_tracks.py --self-test
 ./gen_tracks.py --manifest tracks/manifest.json \
-    --out ../server/internal/game/track_data.go --report
+    --out ../server/internal/game/track_data.go --survey --report
 ```
 
+`--survey` asks the Overpass API for each road in the manifest, stitches the
+OSM ways back into one continuous line, asks an elevation service how high
+every point on it is, and writes the result as a GPX next to the manifest. The
+rest of the run measures those GPX files into `track_data.go`, and
 `mergeSurveyed` prefers a measured track over the authored stand-in with the
-same ID and leaves every other road alone, so the switchover happens one pass
-at a time with no other change anywhere. See `scripts/tracks/README.md`.
+same ID — so the switchover happens one pass at a time with no other change
+anywhere. Without `--survey`, or with the recordings already present, nothing
+touches the network.
+
+Four things that command has to get right, none of which are obvious:
+
+- **A road is not one way.** OSM splits it at every junction, bridge and change
+  of tagging, and Overpass returns the pieces in no order, some running
+  backwards. Laid end to end as they arrive they make a road that teleports,
+  and a curvature pipeline reads every jump as a corner. So the pieces are
+  matched by their endpoints, the longest chain is taken, and the side road the
+  bounding box caught gets dropped.
+- **An OSM way has no elevation**, and gradient is most of what makes a descent
+  a descent. Hence the second request, batched a hundred points at a time.
+- **Nothing in OSM says which end is the top.** A pass the manifest calls a
+  descent is turned to run downhill once the heights arrive.
+- **The real roads are 6–12km and a pass here is about 1.5km**, which is what
+  race pacing, stamina and replay length are all built on. A manifest entry can
+  name the stretch it wants, and the track's real-world note then says which
+  stretch it is.
 
 Length, radius, direction, gradient and where corners begin and end are
-measured. Width and surface come from OSM tags when the way carries them.
-How blind a corner is, and whether a crest unsettles the car, a GPS trace
-cannot know — those stay a judgement.
+measured. Width and surface come from OSM tags when the way carries them. How
+blind a corner is, whether a crest unsettles the car, and which stretch of road
+to use, a GPS trace cannot know — those stay a judgement.
+
+A bounding box is a blunt instrument, so the manifest also carries the
+published figures for each road and the importer says so out loud when its
+measurement lands outside them. Irohazaka descending 120 metres over 20 corners
+is right; 30 metres over 200 corners means the trace is noisy or doubled back.
 
 The importer has no real road to check itself against in CI, so it checks
 itself against shapes whose answers are known exactly. A circle of radius R
@@ -280,6 +313,14 @@ has to measure R; five linked hairpins have to come out as five hairpins that
 alternate; and both have to survive several metres of GPS noise. Measured:
 clean geometry recovers to within 1.6%, noisy to within 8%, and five linked
 16-metre hairpins come back as R15.9–16.5, LRLRL.
+
+CI has no network either, so the fetch is checked the same way rather than
+assumed: stand-ins for Overpass and the elevation service are served over real
+HTTP on localhost, returning a road whose shape is known exactly, with its ways
+shuffled, one of them reversed and a decoy spur mixed in. The importer is
+pointed at them and asked what it made of the road — 3 ways stitched, 1
+dropped, no jump larger than 3.1m where the pieces met, four R20 hairpins
+recovered, and a GPX left behind that reads back pointing downhill.
 
 Three things had to be got right for that, and all three are written down in
 the code because each one looked like a different bug at first:
@@ -317,18 +358,18 @@ in the dampers, on the edge of the tyre — can put the car into the barrier. Th
 run ends there and the repair bill is a proportion of what has been spent on
 the car.
 
-Measured on Usui, the nastiest pass in the game: a factory car crashes 0.33% of
-the time dry, and a fully wound sheet on a wet cold night 2.27%. The same wild
-sheet on wide, smooth Happogahara only crashes 0.35% — geometry reaches the
+Measured on Usui, the nastiest pass in the game: a factory car crashes 0.47% of
+the time dry, and a fully wound sheet on a wet cold night 3.35%. The same wild
+sheet on wide, smooth Happogahara only crashes 0.78% — geometry reaches the
 crash model, so the risk is a property of the road as much as the car. A
-consistent driver on the same sheet crashes 0.88% where a sloppy one crashes
-3.02%.
+consistent driver on the same sheet crashes 1.52% where a sloppy one crashes
+4.65%.
 
 ### The rule that makes setup interesting
 
 **A setup moves performance around. It never creates any.**
 
-Every axis is *centred*: whatever a notch gives you on one kind of road, it
+Every axis is *centred*: whatever a setting gives you on one kind of road, it
 takes back elsewhere in exact proportion to how much of the game's racing
 happens there. Overall rating is therefore invariant to tuning — the garage
 number stays honest, and the per-track number is the one that responds.
@@ -347,8 +388,23 @@ Getting that exactly right took two corrections worth recording:
   which removes it exactly for every car.
 
 A perfect setup is worth about **5%** — roughly a ladder rung, so a well-tuned
-car beats a slightly better one that is not. Measured per pass it runs 3.1% to
-7.0%, averaging 4.6%.
+car beats a slightly better one that is not. Measured per pass it runs 4.0% to
+5.9%, averaging 4.9%.
+
+It has to be worth about the same **everywhere**, too, or only one road is
+really a tuning screen. Happogahara used to pay 7.8% against a 3.5% floor,
+which is two different games depending on which pass came up; it now has a
+second awkward section — it climbs out of the infield onto patched concrete and
+doubles back twice — and the spread across the six is 1.5x rather than 2.2x.
+
+| Pass | Perfect setup was worth | Now |
+|---|---|---|
+| Mt. Akina | 3.5% | 5.3% |
+| Myogi | 5.2% | 4.0% |
+| Irohazaka | 4.9% | 4.8% |
+| Happogahara | **7.8%** | 5.2% |
+| Mt. Akagi | 3.5% | 5.9% |
+| Usui | 3.6% | 4.1% |
 
 The optimum has to depend on the **car**, not only the road, or one published
 sheet per pass would serve everybody. Gearing reads power-to-weight, boost
@@ -358,14 +414,60 @@ moving mass forward helps a front-driven car out of a slow corner and hurts
 everything else. That last one is a sign change rather than a scale, which is
 what a layout needs in order to disagree.
 
+Half the passes used to be **layout-blind**: every drivetrain wanted its mass
+forward and the driven axle got no vote. That was a modelling error rather than
+a fact about mountains. A downhill straight where the car is accelerating the
+whole way was counted as a braking zone, because gradient was *added* to the
+braking demand rather than multiplied into it — and a steep pass is mostly
+that, so every descent came out braking-dominated. Three things followed from
+fixing it:
+
+- gradient now scales the braking that actually happens, plus a term for
+  corners, where holding a speed downhill really is braking;
+- ballast has diminishing returns where gravity has already loaded the front,
+  because by then the tyre is the limit rather than the load;
+- and the driven axle feels the slope. Gravity unloads the rear of a car going
+  down and the front of one going up, so a rear-driven car feels a descent and
+  a front-driven one feels a climb — which is exactly where the driven axle
+  should have the loudest opinion.
+
+All six passes now split, and they split differently:
+
+| Pass | Wants mass forward | Wants it back |
+|---|---|---|
+| Mt. Akina | FF | FR, MR, AWD |
+| Myogi | FR, MR | FF, AWD |
+| Irohazaka | FR, FF, AWD | MR |
+| Happogahara | FR, MR, AWD | FF |
+| Mt. Akagi | FR, MR, AWD | FF |
+| Usui | FF | FR, MR, AWD |
+
 `TestSetupCannotRaiseOverallRating`, `TestNoAxisHasAUniversallyCorrectSetting`,
 `TestTheBestSetupDependsOnTheCar` and `TestASetupForOnePassIsWrongOnAnother`
 hold these down, and the calibration curve is unmoved at 65.2%.
 
+### Set in millimetres, not in notches
+
+Every axis is continuous and physical. A coilover does not have five positions;
+it has a thread, so ride height is any millimetre between 130 and 70, camber
+any tenth of a degree, the final drive any hundredth. `SetupAxis.Values` is the
+calibration curve between the position the model works in and the number on the
+sheet, and `Step` is the granularity the workshop actually works to — the
+server snaps to whole steps out from the factory setting, so nothing can store
+a car that could not be built, and an untouched car stays exactly untouched.
+
+```
+POST /v1/setup   {"axis": "ride_height", "setting": 87}
+```
+
+The screen offers three ways in, because there are three things you want to do
+with a setting: drag the bar to find the ends of the range, tap the arrows to
+walk one step, or type 87 when you already know it is 87mm you want.
+
 ### You find out by racing
 
 Nothing predicts what a sheet is worth. The tuning screen shows the real
-settings — 85mm, 2.4 bar, 4.30 — the road, and the weather, and takes no view
+settings — 87mm, 2.35 bar, 4.22 — the road, and the weather, and takes no view
 at all on whether any of it is right. There is no per-track score anywhere in
 the API, because a number that responds to every adjustment is a dial to
 optimise against, and the first player to solve it solves the pass for
@@ -566,28 +668,29 @@ are genuinely not finished, in the order they should be addressed:
    costs ¥50,000 more than the GC-Series AWD and rates lower, because it is
    1560kg with 50 handling. That may be the right call for a trade-off car, or
    the prices may need another pass.
-8. **Two passes barely respond to setup.** Happogahara moves five of the seven
-   axes; Usui moves one. That is defensible variety, but Usui in particular is
-   close to a screen with nothing to decide on it.
-9. **There is no setup UI.** The sheet, the gates, the geometry, the weather
-   and the post-race notes are all server-side and covered by tests; nothing
-   renders any of it yet.
-10. **No road has actually been recorded yet.** The importer, its self-test
-    and the switchover are all in place and CI-checked, but this environment
-    has no network access to OSM or elevation services, so every pass is still
-    an authored stand-in. One GPX per road turns each into a measurement.
-11. **Setup input is still notched, not continuous.** Every axis is physical
-    internally and displays a real value, but the player picks one of five
-    positions rather than typing 87mm. Exposing continuous input is now a
-    small change rather than a rewrite.
-12. **Happogahara pays more for a setup than the others** — 7.8% against a
-    3.5% floor. Authoring a second awkward section into it would even that
-    out.
-13. **Half the passes do not care what layout you drive.** Weight balance
-    splits front- from rear-driven cars on Akina, Happogahara and Usui, but
-    the steep descents are so braking-dominated that every layout wants mass
-    forward. That is the physics being right, and it does mean three of the
-    six roads are layout-blind.
+7. **No road has actually been recorded yet.** This is the one item on the list
+   that is not waiting on code. `./gen_tracks.py --survey` fetches all six
+   roads, stitches them, fills in their elevation and generates the measured
+   tracks in one command, and every part of that is exercised in CI against
+   stand-ins for the two services — but the environment this was built in
+   refuses the real ones:
+
+   ```
+   could not reach https://overpass-api.de/api/interpreter: Tunnel connection failed: 403 Forbidden
+   ```
+
+   Run that command anywhere with network access and the passes stop being
+   approximations. Two caveats when you do: the bounding boxes in
+   `scripts/tracks/manifest.json` are approximate, so check each query in
+   overpass-turbo before trusting what it selected (the importer cross-checks
+   its measurements against the published figures and complains, which catches
+   the worst of it); and a recording you made by driving the road beats
+   anything a query can produce, because it carries the surface you actually
+   felt.
+8. **Blind corners and crests are still authored**, and always will be from a
+   GPS trace — it cannot know what you can see. They are applied on top of
+   measured geometry, so a surveyed road is measured in its shape and judged in
+   its sightlines.
 
 ## What Milestone 2 might be
 

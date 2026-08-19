@@ -1,15 +1,31 @@
 {
   "_comment": [
-    "One entry per pass. `source` is a file in this directory: a .gpx recorded",
-    "on the road, or a .json response from the Overpass API for its OSM way.",
+    "One entry per pass.",
     "",
-    "Only tracks whose source file exists need to be listed — anything absent",
-    "keeps its authored stand-in, so this can be filled in one road at a time.",
+    "`source` is the recording: a .gpx of the road, or a .json Overpass",
+    "response for its OSM way. `./gen_tracks.py --survey` fetches the road and",
+    "writes that GPX itself, so the file does not have to exist yet — but a",
+    "recording you made by driving the road is better than anything a query",
+    "can produce, and if the file is there it is used as it stands.",
     "",
-    "width and surface are optional overrides. Leave them out and OSM tags are",
-    "used when present, falling back to a 6m mountain road on coarse asphalt.",
-    "segment_names is optional and positional; unnamed corners are named after",
-    "what they turned out to be."
+    "`osm` says where to look: a bounding box (south, west, north, east), and",
+    "optionally a name or ref regex to narrow it. THESE BOXES ARE STARTING",
+    "POINTS, NOT SURVEY CONTROL. Draw the query at https://overpass-turbo.eu",
+    "and look at what it selects before trusting the import; a box that",
+    "catches the road on the other side of the valley measures that one just",
+    "as happily. `expect` is the cross-check: published figures for the road,",
+    "which the importer compares its measurement against and complains about.",
+    "",
+    "`section` keeps one stretch, in metres from the start of the fetched way.",
+    "The real roads are 6-12km and a pass in the game is about 1.5km, which is",
+    "what its race pacing is built on. The geometry inside the section is",
+    "measured; where to start and stop is an authored choice, and it is",
+    "recorded in the track's real-world note.",
+    "",
+    "`width` and `surface` are optional overrides. Leave them out and OSM tags",
+    "are used when present, falling back to a 6m mountain road on coarse",
+    "asphalt. `segment_names` is optional and positional; unnamed corners are",
+    "named after what they turned out to be."
   ],
   "tracks": [
     {
@@ -19,7 +35,26 @@
       "downhill": true,
       "flavour": "Five consecutive hairpins. The gutter is a line, if you're mad enough.",
       "real_world": "Mt. Haruna, Gunma — the east-face descent from Lake Haruna towards Takasaki.",
+      "osm": {
+        "bbox": [36.435, 138.865, 36.485, 138.955],
+        "ref": "33",
+        "start": [36.4745, 138.8735],
+        "section": [1200, 2900]
+      },
+      "expect": { "length_m": [1400, 2000], "descent_m": [80, 200] },
       "width": 6.2
+    },
+    {
+      "id": "myogi_up",
+      "name": "Myogi — Uphill",
+      "source": "myogi_up.gpx",
+      "flavour": "Short, tight, and the crowd stands close enough to touch the mirrors.",
+      "real_world": "Mt. Myogi, Gunma — the climb past the shrine on the Gunma side.",
+      "osm": {
+        "bbox": [36.265, 138.755, 36.325, 138.825],
+        "section": [600, 2000]
+      },
+      "expect": { "length_m": [1100, 1800] }
     },
     {
       "id": "irohazaka",
@@ -28,7 +63,54 @@
       "downhill": true,
       "flavour": "Forty-eight corners, all numbered, all going the same direction. Down.",
       "real_world": "Iroha-zaka, Nikko, Tochigi — the descending one-way road.",
+      "osm": {
+        "bbox": [36.715, 139.465, 36.760, 139.535],
+        "name": "いろは坂",
+        "section": [1800, 3500]
+      },
+      "expect": { "length_m": [1400, 2000], "descent_m": [90, 220] },
       "width": 7.0
+    },
+    {
+      "id": "happogahara",
+      "name": "Happogahara — High Speed",
+      "source": "happogahara.gpx",
+      "flavour": "Wide, fast, and it rewards the brave over the clever.",
+      "real_world": "Happogahara, Yaita, Tochigi — the road up onto the plateau.",
+      "osm": {
+        "bbox": [36.860, 139.750, 36.930, 139.860],
+        "section": [0, 2700]
+      },
+      "expect": { "length_m": [2200, 3200] }
+    },
+    {
+      "id": "akagi_down",
+      "name": "Mt. Akagi — Downhill",
+      "source": "akagi_down.gpx",
+      "downhill": true,
+      "flavour": "Rhythm section after rhythm section. Break the rhythm, lose the race.",
+      "real_world": "Mt. Akagi, Gunma — the descent on the south face from Lake Onuma.",
+      "osm": {
+        "bbox": [36.455, 139.145, 36.555, 139.225],
+        "start": [36.5405, 139.1935],
+        "section": [2000, 3900]
+      },
+      "expect": { "length_m": [1600, 2300], "descent_m": [90, 260] }
+    },
+    {
+      "id": "usui",
+      "name": "Usui Pass — Downhill",
+      "source": "usui.gpx",
+      "downhill": true,
+      "flavour": "Narrow, damp, and lined with a hundred and eighty corners of history.",
+      "real_world": "Usui Pass, Gunma/Nagano — the old Route 18 between Yokokawa and Karuizawa. Published descriptions give 184 corners over about 11km and roughly 550m of elevation.",
+      "osm": {
+        "bbox": [36.315, 138.585, 36.375, 138.690],
+        "ref": "18",
+        "start": [36.3545, 138.6235],
+        "section": [3000, 4300]
+      },
+      "expect": { "length_m": [1100, 1700], "descent_m": [40, 130] }
     }
   ]
 }

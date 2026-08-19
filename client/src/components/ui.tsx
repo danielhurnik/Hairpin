@@ -220,7 +220,15 @@ export function Loading({ label }: { label?: string }) {
 
 export const s = StyleSheet.create({
   screen: { flex: 1, backgroundColor: colors.bg },
-  screenContent: { padding: space(4), gap: space(3) },
+  // Phone-first, but the same code runs in a browser and on a tablet, where a
+  // card stretched to 1200px reads like a spreadsheet. Cap it and centre it.
+  screenContent: {
+    padding: space(4),
+    gap: space(3),
+    width: '100%',
+    maxWidth: 620,
+    alignSelf: 'center',
+  },
   card: {
     backgroundColor: colors.surface,
     borderRadius: radius.lg,

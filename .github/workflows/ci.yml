@@ -67,7 +67,13 @@ jobs:
       # checks itself against shapes whose answers are known exactly: a circle
       # of radius R has to measure R, five linked hairpins have to come out as
       # five hairpins, and both have to survive GPS noise.
-      - name: Geometry self-test
+      #
+      # The fetch is covered the same way. CI has no network either, so the
+      # self-test serves stand-ins for Overpass and the elevation service over
+      # localhost and points the importer at them — which exercises the query,
+      # the stitching, the batching and the GPX it writes, rather than trusting
+      # that the one command works because it looks like it should.
+      - name: Geometry and import self-test
         run: python3 gen_tracks.py --self-test
 
   client:
